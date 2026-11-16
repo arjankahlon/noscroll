@@ -13,7 +13,21 @@
       "iconURL": "https://raw.githubusercontent.com/arjankahlon/noscroll/main/following/icon.png",
       "tintColor": "2E8B8B",
       "category": "social",
-      "versions": []
+      "versions": [
+        {
+          "version": "1.0.3",
+          "buildVersion": "3",
+          "date": "2026-11-16T22:37:16Z",
+          "localizedDescription": "Built from 3825c54",
+          "downloadURL": "https://github.com/arjankahlon/noscroll/releases/download/v1.0.3/Following.ipa",
+          "size": 94619,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "version": "1.0.3",
+      "versionDate": "2026-11-16T22:37:16Z",
+      "downloadURL": "https://github.com/arjankahlon/noscroll/releases/download/v1.0.3/Following.ipa",
+      "size": 94619
     }
   ],
   "news": []
