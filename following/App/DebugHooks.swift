@@ -1,4 +1,5 @@
 #if DEBUG
+import AVKit
 import Foundation
 import WebKit
 
@@ -13,6 +14,7 @@ enum DebugHooks {
     static func log(_ s: String) { NSLog("[following] %@", s) }
 
     static func attach(_ controller: InstaWebController) {
+        log("PiP supported on this device: \(AVPictureInPictureController.isPictureInPictureSupported()) pipAllowed=\(controller.webView.configuration.allowsPictureInPictureMediaPlayback)")
         controller.webView.isInspectable = true
         let tab = controller.tab.title.lowercased()
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

@@ -1,3 +1,4 @@
+import AVFoundation
 import SafariServices
 import SwiftUI
 import UIKit
@@ -83,6 +84,8 @@ final class InstaWebController: NSObject, ObservableObject {
         cfg.websiteDataStore = InstaWeb.dataStore
         cfg.allowsInlineMediaPlayback = true
         cfg.mediaTypesRequiringUserActionForPlayback = []
+        // Videos can go into Picture in Picture (the PiP button on videos in the Home feeds).
+        cfg.allowsPictureInPictureMediaPlayback = true
 
         webView = WKWebView(frame: .zero, configuration: cfg)
         webView.allowsBackForwardNavigationGestures = true

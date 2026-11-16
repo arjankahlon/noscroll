@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 /// Following: Instagram with four tabs and nothing else.
@@ -9,6 +10,12 @@ import SwiftUI
 /// and the posting buttons.
 @main
 struct FollowingApp: App {
+    init() {
+        // "Playback" audio: video sound plays with the silent switch on, and a video in Picture
+        // in Picture keeps playing when you leave the app (with the "audio" background mode).
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+    }
+
     var body: some Scene {
         WindowGroup {
             RootTabs()

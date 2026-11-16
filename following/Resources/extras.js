@@ -355,6 +355,9 @@
       '#fl-ff .track::-webkit-scrollbar{display:none}',
       '#fl-ff .slide{flex:0 0 100%;scroll-snap-align:center;height:100%;display:flex;align-items:center;justify-content:center;background:#000}',
       '#fl-ff .slide img,#fl-ff .slide video{width:100%;height:100%;object-fit:cover;display:block}',
+      '#fl-ff .slide{position:relative}',
+      '#fl-ff .pip{all:unset;position:absolute;top:10px;left:10px;width:34px;height:34px;border-radius:17px;background:rgba(18,18,18,.6);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}',
+      '#fl-ff .pip svg{width:20px;height:20px}',
       '#fl-ff .dots{display:flex;justify-content:center;gap:4px;padding-top:8px}',
       '#fl-ff .n{position:absolute;top:12px;right:12px;padding:3px 9px;border-radius:12px;background:rgba(18,18,18,.7);color:#fff;font:600 12px/18px -apple-system,system-ui,sans-serif;pointer-events:none;transition:opacity .3s}',
       '#fl-ff .n.off{opacity:0}',
@@ -454,6 +457,37 @@
     for (var i = 0; i < c.length; i++) if (c[i].width >= 720 && (!pick || c[i].width < pick.width)) pick = c[i];
     return (pick || c[0] || {}).url || m.display_uri || '';
   }
+  // Picture in Picture: the video keeps playing in a small window over other tabs and apps,
+  // with iOS's own controls (pause, skip back and forward).
+  function pipButton(v) {
+    var b = el('button', 'pip');
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Picture in Picture');
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    var outer = document.createElementNS(SVG_NS, 'rect');
+    outer.setAttribute('x', '2.5'); outer.setAttribute('y', '4.5'); outer.setAttribute('width', '19'); outer.setAttribute('height', '15');
+    outer.setAttribute('rx', '2'); outer.setAttribute('fill', 'none'); outer.setAttribute('stroke', 'currentColor'); outer.setAttribute('stroke-width', '2');
+    var inner = document.createElementNS(SVG_NS, 'rect');
+    inner.setAttribute('x', '11.5'); inner.setAttribute('y', '11'); inner.setAttribute('width', '7.5'); inner.setAttribute('height', '5.5');
+    inner.setAttribute('rx', '1'); inner.setAttribute('fill', 'currentColor');
+    svg.appendChild(outer);
+    svg.appendChild(inner);
+    b.appendChild(svg);
+    b.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var p = v.play();
+      if (p && p.catch) p.catch(function () {});
+      if (v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
+        v.webkitSetPresentationMode(v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+      } else if (document.pictureInPictureEnabled && v.requestPictureInPicture) {
+        (document.pictureInPictureElement === v ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(function () {});
+      }
+    });
+    return b;
+  }
+
   function slideFor(m) {
     var s = el('div', 'slide');
     var video = m.video_versions && m.video_versions[0] && m.video_versions[0].url;
@@ -467,6 +501,7 @@
       v.preload = 'metadata';
       v.loop = true;
       s.appendChild(v);
+      s.appendChild(pipButton(v));
     } else {
       var img = document.createElement('img');
       img.loading = 'lazy';

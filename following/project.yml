@@ -39,6 +39,8 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
+        # Picture in Picture keeps playing outside the app.
+        UIBackgroundModes: [audio]
         NSCameraUsageDescription: Instagram asks for the camera when you send a photo or video in Messages.
         NSMicrophoneUsageDescription: Instagram asks for the microphone when you record a voice message or video.
         NSPhotoLibraryUsageDescription: Lets you pick photos to send in Messages.
