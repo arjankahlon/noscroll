@@ -1,0 +1,20 @@
+{
+  "name": "Following",
+  "identifier": "com.arjankahlon.following.source",
+  "sourceURL": "https://raw.githubusercontent.com/arjankahlon/noscroll/main/following/source.json",
+  "iconURL": "https://raw.githubusercontent.com/arjankahlon/noscroll/main/following/icon.png",
+  "apps": [
+    {
+      "name": "Following",
+      "bundleIdentifier": "com.arjankahlon.following",
+      "developerName": "arjankahlon",
+      "subtitle": "Instagram: Following feed, Search, Messages, Profile.",
+      "localizedDescription": "A personal Instagram browser built on the NoScroll engine (AGPL-3.0). Four tabs: Home (Following feed), Search, Messages and Profile. Hides Reels, Explore, ads, suggested posts and the posting buttons.",
+      "iconURL": "https://raw.githubusercontent.com/arjankahlon/noscroll/main/following/icon.png",
+      "tintColor": "2E8B8B",
+      "category": "social",
+      "versions": []
+    }
+  ],
+  "news": []
+}

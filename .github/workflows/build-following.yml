@@ -1,0 +1,97 @@
+name: Build Following (.ipa for SideStore)
+
+# Builds an unsigned Following.ipa on every push to main that touches the app or the engine,
+# publishes it as a GitHub release, and updates following/source.json so SideStore / AltStore
+# offer the new version. SideStore signs the app with your own Apple ID when it installs it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "following/**"
+      - "!following/source.json"
+      - "ios/NoScroll/Resources/noscroll.js"
+      - ".github/workflows/build-following.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-following
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        working-directory: following
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        working-directory: following
+        run: |
+          VERSION="1.0.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          xcodebuild build \
+            -project Following.xcodeproj \
+            -scheme Following \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Package Following.ipa
+        working-directory: following
+        run: |
+          mkdir -p out/Payload
+          cp -R build/Build/Products/Release-iphoneos/Following.app out/Payload/
+          cd out && zip -qry Following.ipa Payload
+          echo "SIZE=$(stat -f%z Following.ipa)" >> "$GITHUB_ENV"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${VERSION}" following/out/Following.ipa \
+            --title "Following ${VERSION}" \
+            --notes "Built from ${GITHUB_SHA::7}. Install or update it from SideStore / AltStore."
+
+      - name: Update the SideStore source
+        run: |
+          python3 - <<'EOF'
+          import json, os, datetime
+          path = "following/source.json"
+          src = json.load(open(path))
+          app = src["apps"][0]
+          version = os.environ["VERSION"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          entry = {
+              "version": version,
+              "buildVersion": os.environ["GITHUB_RUN_NUMBER"],
+              "date": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "localizedDescription": "Built from " + os.environ["GITHUB_SHA"][:7],
+              "downloadURL": f"https://github.com/{repo}/releases/download/v{version}/Following.ipa",
+              "size": int(os.environ["SIZE"]),
+              "minOSVersion": "17.0",
+          }
+          app["versions"] = [entry] + [v for v in app.get("versions", []) if v.get("version") != version][:9]
+          # Older AltStore versions read these top-level fields.
+          app["version"], app["versionDate"], app["downloadURL"], app["size"] = (
+              entry["version"], entry["date"], entry["downloadURL"], entry["size"])
+          json.dump(src, open(path, "w"), indent=2)
+          open(path, "a").write("\n")
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add following/source.json
+          git commit -m "SideStore source: Following ${VERSION}"
+          git push

@@ -1,0 +1,230 @@
+{
+  "version": 1002,
+  "minEngine": 1,
+  "services": {
+    "instagram": {
+      "match": [
+        "*://*.instagram.com/*"
+      ],
+      "authAllowList": [
+        "^/accounts/",
+        "^/challenge/",
+        "^/oauth/",
+        "^/emailsignup"
+      ],
+      "surfaces": {
+        "reels-tab": {
+          "kind": "dom-remove",
+          "label": "Block Reels",
+          "selectors": [
+            "nav a[href^='/reels']",
+            "[role='tablist'] a[href^='/reels']",
+            "[role='navigation'] a[href^='/reels']",
+            "a[href^='/reels'][role='link']",
+            "div[role='menuitem'] a[href^='/reels']"
+          ],
+          "afterRemove": "rejustify",
+          "observe": true,
+          "probe": {
+            "expectMin": 1,
+            "onlyWhenSignedIn": true
+          },
+          "defaultEnabled": true,
+          "suppression": "hide"
+        },
+        "reels-route": {
+          "kind": "route-block",
+          "label": "Block Reels",
+          "patterns": [
+            "^/reels(/|$)",
+            "^/reels/audio/",
+            "^/reels/video/"
+          ],
+          "redirect": "/?variant=following",
+          "defaultEnabled": true
+        },
+        "explore-tab": {
+          "kind": "dom-remove",
+          "label": "Block Explore",
+          "selectors": [
+            "nav a[href^='/explore']",
+            "[role='tablist'] a[href^='/explore']",
+            "[role='navigation'] a[href^='/explore']",
+            "a[href^='/explore/'][role='link']",
+            "div[role='menuitem'] a[href^='/explore']"
+          ],
+          "afterRemove": "rejustify",
+          "observe": true,
+          "probe": {
+            "expectMin": 1,
+            "onlyWhenSignedIn": true
+          },
+          "defaultEnabled": true,
+          "suppression": "hide"
+        },
+        "explore-route": {
+          "kind": "route-block",
+          "label": "Block Explore",
+          "patterns": [
+            "^/explore/?(\\?|$)",
+            "^/explore/tags/",
+            "^/explore/locations/"
+          ],
+          "redirect": "/explore/search/",
+          "defaultEnabled": true
+        },
+        "suggested-posts": {
+          "kind": "dom-remove",
+          "defaultEnabled": true,
+          "label": "Hide suggested posts",
+          "selectors": [
+            "article:has([aria-label='Suggested for you'])",
+            "article:has([aria-label*='Suggested'])"
+          ],
+          "observe": true,
+          "suppression": "hide",
+          "probe": {
+            "expectMin": 0,
+            "warnIfZeroFor": "6h"
+          },
+          "source": "seeded from BevizLaszlo/UBlock-Filters-for-Social-Media (MIT). Only the \"Suggested for you\" mark: the \"Why am I seeing\" button is also on ads, and NoScroll does not block ads."
+        },
+        "sponsored": {
+          "kind": "dom-remove",
+          "defaultEnabled": true,
+          "label": "Hide ads",
+          "selectors": [
+            "article:has(a[href*='utm_source'])",
+            "article:has([data-ad-preview])"
+          ],
+          "observe": true,
+          "probe": {
+            "expectMin": 0
+          },
+          "source": "Following: on. extras.js also removes posts labelled \"Sponsored\" or \"Ad\".",
+          "suppression": "hide"
+        },
+        "stories-tray": {
+          "kind": "dom-remove",
+          "defaultEnabled": false,
+          "label": "Block Stories",
+          "selectors": [
+            "main [role='menu']:has(canvas)",
+            "main > div > div:first-child:has(canvas + img)"
+          ],
+          "observe": true,
+          "probe": {
+            "expectMin": 0
+          },
+          "suppression": "hide"
+        },
+        "stories-route": {
+          "kind": "route-block",
+          "defaultEnabled": false,
+          "label": "Block Stories",
+          "patterns": [
+            "^/stories/"
+          ],
+          "redirect": "/?variant=following"
+        },
+        "saved-posts": {
+          "kind": "route-block",
+          "defaultEnabled": false,
+          "label": "Block Saved Posts",
+          "patterns": [
+            "^/[^/]+/saved(/|$)"
+          ],
+          "redirect": "/"
+        },
+        "feed": {
+          "kind": "dom-remove",
+          "defaultEnabled": false,
+          "label": "Block Feed",
+          "selectors": [
+            "main article"
+          ],
+          "onlyOnRoutes": [
+            "^/$"
+          ],
+          "observe": true,
+          "probe": {
+            "expectMin": 0
+          },
+          "suppression": "hide"
+        },
+        "dms-only": {
+          "kind": "route-allow-only",
+          "defaultEnabled": false,
+          "label": "DMs Only",
+          "redirect": "/direct/inbox/",
+          "allow": [
+            "^/direct/",
+            "^/p/",
+            "^/reel/"
+          ]
+        },
+        "grayscale": {
+          "kind": "style",
+          "defaultEnabled": false,
+          "label": "Grayscale",
+          "css": "html { filter: grayscale(1) !important; }"
+        },
+        "isolated-player": {
+          "kind": "isolate",
+          "label": "One video at a time",
+          "patterns": [
+            "^/reel/[^/]+",
+            "^/p/[^/]+"
+          ],
+          "onAdvance": "back",
+          "defaultEnabled": true
+        },
+        "search-grid": {
+          "kind": "style",
+          "label": "Hide the grid under Search",
+          "css": "html[data-fl-route='search'] main a[href^='/p/'], html[data-fl-route='search'] main a[href^='/reel/'], html[data-fl-route='search'] main a[href^='/reels/'] { display: none !important; }",
+          "defaultEnabled": true,
+          "source": "Following: Search opens the search box, not Explore. A style rule, because the engine's CSS ignores onlyOnRoutes; extras.js sets data-fl-route on the Search page."
+        },
+        "create": {
+          "kind": "dom-remove",
+          "label": "Hide New post",
+          "selectors": [
+            "a[href^='/create/']",
+            "a:has(svg[aria-label='New post'])",
+            "[role='link']:has(svg[aria-label='New post'])",
+            "[role='button']:has(svg[aria-label='New post'])",
+            "[role='button']:has(svg[aria-label='New story'])",
+            "header a[href='#']:has(svg)"
+          ],
+          "observe": true,
+          "probe": {
+            "expectMin": 0
+          },
+          "defaultEnabled": true,
+          "suppression": "hide"
+        },
+        "create-route": {
+          "kind": "route-block",
+          "label": "Hide New post",
+          "patterns": [
+            "^/create/"
+          ],
+          "redirect": "/?variant=following",
+          "defaultEnabled": true
+        },
+        "for-you-link": {
+          "kind": "style",
+          "label": "Hide the way back to the For you feed",
+          "css": "a[href^='/?variant=home'] { pointer-events: none !important; } a[href^='/?variant=home'] svg[aria-label='Back'] { display: none !important; }",
+          "defaultEnabled": true,
+          "source": "Following: Home is the Following feed only. Keeps the title, removes the back arrow."
+        }
+      },
+      "signedOutWhen": [
+        "a[href*='/accounts/login']",
+        "a[href*='/accounts/signup']"
+      ]
+    }
+  }
+}
