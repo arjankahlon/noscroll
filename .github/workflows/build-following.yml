@@ -22,7 +22,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    # macos-latest: GitHub has more of these than of any one pinned macOS version.
+    runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
