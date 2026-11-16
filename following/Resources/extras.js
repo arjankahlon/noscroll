@@ -727,8 +727,46 @@
 
   // The app's own list: what it has drawn, and where the next page starts.
   function freshState(mode) {
-    return { mode: mode, shown: {}, cards: 0, next: '', more: true, started: false, loading: false, error: false, emptyRun: 0 };
+    return { mode: mode, shown: {}, cards: 0, next: '', more: true, started: false, loading: false, error: false, emptyRun: 0,
+      counted: {}, seenRun: 0, caughtUp: false, showSeen: false, held: 0 };
   }
+
+  // Posts you have looked at (on screen for about a second), so a reload shows what's new.
+  // Kept in localStorage for 14 days. Instagram's own app reports this to Instagram; the app
+  // keeps it on the phone instead and skips those posts itself.
+  var SEEN_KEY = 'following.seen', SEEN_DAYS = 14;
+  var seen = {};
+  try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {}; } catch (e) { seen = {}; }
+  (function prune() {
+    var cutoff = Date.now() - SEEN_DAYS * 86400000, n = 0;
+    for (var k in seen) { if (seen[k] < cutoff) delete seen[k]; else n++; }
+  })();
+  var seenDirty = false;
+  function saveSeen() {
+    if (!seenDirty) return;
+    seenDirty = false;
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch (e) {}
+  }
+  setInterval(saveSeen, 2000);
+  addEventListener('pagehide', saveSeen);
+
+  var seenTimers = {};
+  var seenObserver = ('IntersectionObserver' in window) ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      var code = en.target.dataset.code;
+      if (!code) return;
+      if (en.isIntersecting && en.intersectionRatio >= 0.5) {
+        if (!seenTimers[code]) seenTimers[code] = setTimeout(function () {
+          seen[code] = Date.now();
+          seenDirty = true;
+          seenObserver.unobserve(en.target);
+        }, 1000);
+      } else if (seenTimers[code]) {
+        clearTimeout(seenTimers[code]);
+        delete seenTimers[code];
+      }
+    });
+  }, { threshold: [0, 0.5, 1] }) : null;
   var ff = freshState('following');
   var FF_ID = 'fl-ff';
   var bootNudges = 0, lastBootNudge = 0;
@@ -748,13 +786,28 @@
     var key = '';
     while (pages.hasOwnProperty(key) && guard++ < 500) {
       var pg = pages[key];
+      var kept = 0, keptSeen = 0;
       for (var i = 0; i < pg.items.length; i++) {
         var m = pg.items[i];
-        if (ff.shown[m.code] || !cfg.keep(m)) continue;
+        if (!cfg.keep(m)) continue;
+        kept++;
+        var wasSeen = !!seen[m.code] && !ff.shown[m.code];
+        if (wasSeen) keptSeen++;
+        if (ff.shown[m.code]) continue;
+        if (wasSeen && !ff.showSeen) { ff.held++; continue; }
         ff.shown[m.code] = 1;
-        list.appendChild(card(m));
+        var c = card(m);
+        list.appendChild(c);
+        if (seenObserver && !seen[m.code]) seenObserver.observe(c);
         ff.cards++;
         added++;
+      }
+      // Caught up: two pages in a row whose posts (for this feed) were all seen before.
+      if (!ff.counted[key]) {
+        ff.counted[key] = 1;
+        if (kept > 0 && keptSeen === kept) ff.seenRun++;
+        else if (kept > keptSeen) ff.seenRun = 0;
+        if (ff.seenRun >= 2 && !ff.showSeen) ff.caughtUp = true;
       }
       ff.next = pg.end;
       ff.more = pg.more && !!pg.end;
@@ -765,16 +818,31 @@
     return added;
   }
 
+  // Session fields for repeating Instagram's requests: from Instagram's latest request on this
+  // page if there is one, else from the page itself (Instagram has kept the token in different
+  // places: "DTSGInitialData", and later "MRequestConfig" -> "dtsg"), with the account fields
+  // (av, __user...) from the learned request.
   function freshSession() {
     var feed = window.__flFeed || {};
     if (feed.common && feed.common.fb_dtsg) return feed.common;
     var html = document.documentElement.innerHTML;
-    var d = /"DTSGInitialData",\[\],\{"token":"([^"]+)"/.exec(html);
+    var d = /"DTSGInitialData",\[\],\{"token":"([^"]+)"/.exec(html) ||
+      /"MRequestConfig",\[\],\{"dtsg":\{"token":"([^"]+)"/.exec(html) ||
+      /"dtsg":\{"token":"([^"]+)"/.exec(html);
     var l = /"LSD",\[\],\{"token":"([^"]+)"/.exec(html);
     if (!d) return null;
+    var out = {};
+    if (feed.template) {
+      var tp = new URLSearchParams(feed.template.body);
+      ['av', '__user', '__a', '__d', '__comet_req', 'dpr', '__hs', '__rev', '__s', '__hsi', '__dyn', '__csr', '__spin_r', '__spin_b', '__spin_t', '__crn']
+        .forEach(function (f) { if (tp.has(f)) out[f] = tp.get(f); });
+    }
     var sum = 0;
     for (var i = 0; i < d[1].length; i++) sum += d[1].charCodeAt(i);
-    return { fb_dtsg: d[1], lsd: l ? l[1] : '', jazoest: '2' + sum };
+    out.fb_dtsg = d[1];
+    out.lsd = l ? l[1] : '';
+    out.jazoest = '2' + sum;
+    return out;
   }
 
   // Ask Instagram for the page after `cursor` ('' for the first page) of the ranked feed
@@ -829,6 +897,18 @@
       retry.type = 'button';
       retry.addEventListener('click', function () { ff.error = false; ff.emptyRun = 0; queue(); });
       end.appendChild(retry);
+    } else if ((ff.caughtUp || (!ff.more && hasTpl)) && !ff.showSeen && ff.held > 0) {
+      var t = el('div', '', "You're all caught up");
+      t.style.cssText = 'font-weight:600;color:inherit;margin-bottom:4px';
+      end.appendChild(t);
+      end.appendChild(document.createTextNode("You've seen the new posts. "));
+      var more = el('button', '', 'Show posts you\'ve seen');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        ff.showSeen = true; ff.caughtUp = false; ff.seenRun = 0; ff.emptyRun = 0; ff.counted = {};
+        queue();
+      });
+      end.appendChild(more);
     } else if (!ff.more && hasTpl) {
       end.textContent = ff.cards ? "You're all caught up" : cfg.none;
     } else if (!ff.cards) {
@@ -838,9 +918,15 @@
     }
   }
 
+  // Signed in: Instagram sets the ds_user_id cookie. Signed out, leave Instagram's page alone,
+  // so its "Log in" screen shows.
+  function signedIn() {
+    return /(?:^|; )ds_user_id=/.test(document.cookie);
+  }
+
   function ownFeedStep() {
     var root = document.documentElement;
-    var on = TAB === 'home' && onFollowingFeed();
+    var on = TAB === 'home' && onFollowingFeed() && signedIn();
     var box = document.getElementById(FF_ID);
     if (!on) {
       root.classList.remove('fl-own', 'fl-own-boot');
@@ -853,9 +939,11 @@
     var mode = feedMode();
     var feed = window.__flFeed || {};
     root.classList.add('fl-own');
-    // No "load more" request seen yet (first use): let Instagram's own list load one, unseen.
-    root.classList.toggle('fl-own-boot', !feed.template);
-    if (!feed.template && bootNudges < 20 && Date.now() - lastBootNudge > 1500) {
+    // Until Instagram's own list has made one "load more" request on this page (its session
+    // fields go stale between visits), keep that list laid out but unseen and let it load once.
+    var ready = !!(feed.live && feed.template);
+    root.classList.toggle('fl-own-boot', !ready);
+    if (!ready && bootNudges < 20 && Date.now() - lastBootNudge > 1500) {
       // Instagram's list asks for more when it sees a scroll near its end.
       bootNudges++;
       lastBootNudge = Date.now();
@@ -881,7 +969,7 @@
     var near = end.getBoundingClientRect().top - window.innerHeight < window.innerHeight * 2;
     // A run of pages with nothing to keep: keep going, but stop after 15 until you scroll.
     var nextCursor = ff.started ? ff.next : '';
-    if (near && ff.more && typeof nextCursor === 'string' && !ff.loading && !ff.error && ff.emptyRun < 15 && feed.template) {
+    if (near && ff.more && !ff.caughtUp && typeof nextCursor === 'string' && !ff.loading && !ff.error && ff.emptyRun < 15 && ready) {
       ff.loading = true;
       var state = ff;
       var before = ff.cards;

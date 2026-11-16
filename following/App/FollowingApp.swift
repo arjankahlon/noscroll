@@ -101,6 +101,7 @@ struct RootTabs: View {
                 ForEach(InstaTab.barTabs) { tab in
                     InstaWebView(controller: tabs.controller(for: tab))
                         .ignoresSafeArea(.container, edges: .bottom)
+                        .toolbar(tabs.barHidden.contains(tab) ? .hidden : .visible, for: .tabBar)
                         .tag(tab)
                         .tabItem { Label(tab.title, systemImage: tab.symbol) }
                 }
@@ -140,12 +141,30 @@ struct RootTabs: View {
 @MainActor
 final class TabWebViews: ObservableObject {
     private var controllers: [InstaTab: InstaWebController] = [:]
+    private var observers: [NSKeyValueObservation] = []
+
+    /// Tabs showing a page that needs the bottom of the screen: a DM chat, whose message box
+    /// and keyboard would sit behind the tab bar. The tab bar hides there, as in Instagram's app.
+    @Published private(set) var barHidden: Set<InstaTab> = []
 
     func controller(for tab: InstaTab) -> InstaWebController {
         if let c = controllers[tab] { return c }
         let c = InstaWebController(tab: tab)
         controllers[tab] = c
+        observers.append(c.webView.observe(\.url, options: [.new]) { [weak self] wv, _ in
+            let hide = Self.needsFullHeight(wv.url)
+            Task { @MainActor in
+                guard let self else { return }
+                if hide { self.barHidden.insert(tab) } else { self.barHidden.remove(tab) }
+            }
+        })
         return c
+    }
+
+    /// A DM chat (/direct/t/...), or a new message.
+    nonisolated static func needsFullHeight(_ url: URL?) -> Bool {
+        guard let path = url?.path else { return false }
+        return path.hasPrefix("/direct/t/") || path.hasPrefix("/direct/new")
     }
 
     func goHome(_ tab: InstaTab) {

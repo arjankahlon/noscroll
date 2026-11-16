@@ -124,6 +124,8 @@
       // Learn the request from Instagram's own Following "load more" (the Friends feed's own
       // ranked requests are built from it, so they are not stored).
       if (ctx.source === 'following') {
+        // Seen live on this page: its session fields are current (a stored one goes stale).
+        feed.live = true;
         feed.template = { url: String(url), body: body, headers: headersObject(headers) };
         try { localStorage.setItem('following.feedTemplate', JSON.stringify(feed.template)); } catch (e) {}
       }
