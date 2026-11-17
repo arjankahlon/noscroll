@@ -20,6 +20,19 @@
   try { if (localStorage.getItem('following.plain') === '2') return; } catch (e) {}
   window.__flPrivacyHook = true;
 
+  /* ---------- 0. No flash of Instagram's feed ---------- */
+  // On the Home feed, signed in, keep the page blank until extras.js has swapped in the app's
+  // own feed (it removes "fl-early"; a timer is the fallback).
+  if (location.pathname === '/' && location.search.indexOf('variant=following') !== -1 &&
+      /(?:^|; )ds_user_id=/.test(document.cookie)) {
+    var root = document.documentElement;
+    root.classList.add('fl-early');
+    var st = document.createElement('style');
+    st.textContent = 'html.fl-early body{opacity:0 !important}';
+    (document.head || root).appendChild(st);
+    setTimeout(function () { root.classList.remove('fl-early'); }, 4000);
+  }
+
   /* ---------- 1. Privacy ---------- */
   var KEY = 'following.privacy';
   var map = {};
@@ -105,7 +118,10 @@
     if (p.get('fb_dtsg')) {
       var common = {};
       SESSION_FIELDS.forEach(function (f) { if (p.has(f)) common[f] = p.get(f); });
+      var first = !feed.common;
       feed.common = common;
+      // The Home feeds can start loading now (extras.js).
+      if (first && window.__flKick) setTimeout(window.__flKick, 0);
     }
     var vars = null;
     try { vars = JSON.parse(p.get('variables') || 'null'); } catch (e) {}

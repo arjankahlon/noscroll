@@ -808,6 +808,7 @@
         if (ff.shown[m.code]) continue;
         if (already && !ff.showSeen) { ff.held++; continue; }
         ff.shown[m.code] = 1;
+        if (!window.__flFirstCard) window.__flFirstCard = Math.round(performance.now());
         var c = card(m);
         list.appendChild(c);
         if (seenObserver && !wasSeen(m)) seenObserver.observe(c);
@@ -819,7 +820,9 @@
         ff.counted[key] = 1;
         if (kept > 0 && keptSeen === kept) ff.seenRun++;
         else if (kept > keptSeen) ff.seenRun = 0;
-        if (ff.seenRun >= 2 && !ff.showSeen && !ff.unliked) ff.caughtUp = true;
+        // Friends is newest first, so one page of seen posts means the rest are older and seen;
+        // Following is ranked, so it waits for two.
+        if (ff.seenRun >= (ff.mode === 'friends' ? 1 : 2) && !ff.showSeen && !ff.unliked) ff.caughtUp = true;
       }
       ff.next = pg.end;
       ff.more = pg.more && !!pg.end;
@@ -833,6 +836,7 @@
   // Friends, after "You're all caught up": earlier posts from private accounts that you've seen
   // but not liked, in Instagram's suggested order (the ranked feed), under a divider.
   function startUnliked(list) {
+    if (!window.__flFirstCard) window.__flFirstCard = Math.round(performance.now());
     ff.unliked = true;
     ff.caughtUp = false;
     ff.emptyRun = 0;
@@ -974,6 +978,16 @@
     return /(?:^|; )ds_user_id=/.test(document.cookie);
   }
 
+  // Fetch the first page of the other Home feed in the background, so switching is instant.
+  var prefetched = {};
+  function prefetchOther(mode) {
+    var other = FEEDS[mode === 'friends' ? 'following' : 'friends'].source;
+    var pages = (window.__flFeed.pages || {})[other] || {};
+    if (prefetched[other] || pages.hasOwnProperty('')) return;
+    prefetched[other] = true;
+    fetchPage(other, '').catch(function () { prefetched[other] = false; });
+  }
+
   function ownFeedStep() {
     var root = document.documentElement;
     var on = TAB === 'home' && onFollowingFeed() && signedIn();
@@ -989,9 +1003,13 @@
     var mode = feedMode();
     var feed = window.__flFeed || {};
     root.classList.add('fl-own');
-    // Until Instagram's own list has made one "load more" request on this page (its session
-    // fields go stale between visits), keep that list laid out but unseen and let it load once.
-    var ready = !!(feed.live && feed.template);
+    // Ready to fetch: the saved request plus fresh session fields from Instagram's first request
+    // on this page (about a second in). Only if there is no saved request yet (first use), or the
+    // saved one stopped working, wait for Instagram's own list to make a "load more" request:
+    // keep that list laid out but unseen and let it load once.
+    var quick = !!(feed.template && feed.common && feed.common.fb_dtsg && !feed.staleTemplate);
+    var ready = !!(feed.template && (feed.live || quick));
+    if (ready) prefetchOther(mode);
     root.classList.toggle('fl-own-boot', !ready);
     if (!ready && bootNudges < 20 && Date.now() - lastBootNudge > 1500) {
       // Instagram's list asks for more when it sees a scroll near its end.
@@ -1038,6 +1056,8 @@
       }, function () {
         if (state !== ff) return;
         ff.loading = false;
+        // The saved request didn't work: fall back to learning a fresh one from Instagram's list.
+        if (!feed.live && !feed.staleTemplate) { feed.staleTemplate = true; queue(); return; }
         ff.error = true;
         setEnd(box);
       });
@@ -1062,6 +1082,8 @@
     stripStep();
     modeSwitchStep();
     ownFeedStep();
+    // The app's feed is in place (or this isn't the Home feed): show the page.
+    document.documentElement.classList.remove('fl-early');
   }
   function queue() {
     if (queued) return;
@@ -1069,6 +1091,7 @@
     setTimeout(tick, 150);
   }
 
+  window.__flKick = queue;
   tick();
   new MutationObserver(queue).observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener('popstate', queue);
