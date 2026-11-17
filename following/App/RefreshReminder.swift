@@ -75,7 +75,7 @@ struct RefreshBanner: View {
         HStack(spacing: 6) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 14, weight: .bold))
-            Text("Refresh in SideStore")
+            Text("LocalDevVPN → Refresh in SideStore")
                 .font(.system(size: 15, weight: .semibold))
             Text("· \(reminder.expiryText)")
                 .font(.system(size: 15, weight: .regular))
@@ -84,6 +84,7 @@ struct RefreshBanner: View {
         .lineLimit(1)
         .minimumScaleFactor(0.85)
         .foregroundStyle(.white)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .background(Color.orange.ignoresSafeArea(edges: .top))
