@@ -651,7 +651,8 @@
     var t = el('div', 't');
     var renderLikes = function () {
       t.textContent = '';
-      if (m.like_and_view_counts_disabled || typeof m.like_count !== 'number') return;
+      // Shown even when the poster hid the count: Instagram still sends it.
+      if (typeof m.like_count !== 'number') return;
       var top = (m.top_likers && m.top_likers[0]) || (m.facepile_top_likers && m.facepile_top_likers[0] && m.facepile_top_likers[0].username);
       if (top && m.like_count > 1) {
         t.appendChild(document.createTextNode('Liked by '));
@@ -755,6 +756,12 @@
   setInterval(saveSeen, 2000);
   addEventListener('pagehide', saveSeen);
 
+  // Seen: on screen in this app, or marked seen by Instagram itself (is_seen, which includes what
+  // you saw in Instagram's own app), or liked by you.
+  function wasSeen(m) {
+    return !!seen[m.code] || m.is_seen === true || !!m.has_liked;
+  }
+
   var seenTimers = {};
   var seenObserver = ('IntersectionObserver' in window) ? new IntersectionObserver(function (entries) {
     entries.forEach(function (en) {
@@ -796,14 +803,14 @@
         var m = pg.items[i];
         if (!cfg.keep(m)) continue;
         kept++;
-        var wasSeen = !!seen[m.code] && !ff.shown[m.code];
-        if (wasSeen) keptSeen++;
+        var already = wasSeen(m) && !ff.shown[m.code];
+        if (already) keptSeen++;
         if (ff.shown[m.code]) continue;
-        if (wasSeen && !ff.showSeen) { ff.held++; continue; }
+        if (already && !ff.showSeen) { ff.held++; continue; }
         ff.shown[m.code] = 1;
         var c = card(m);
         list.appendChild(c);
-        if (seenObserver && !seen[m.code]) seenObserver.observe(c);
+        if (seenObserver && !wasSeen(m)) seenObserver.observe(c);
         ff.cards++;
         added++;
       }
@@ -842,7 +849,7 @@
       var pg = pages[key];
       for (var i = 0; i < pg.items.length; i++) {
         var m = pg.items[i];
-        if (ff.shown[m.code] || !isFriend(m) || !seen[m.code] || m.has_liked) continue;
+        if (ff.shown[m.code] || !isFriend(m) || m.has_liked || !(seen[m.code] || m.is_seen === true)) continue;
         ff.shown[m.code] = 1;
         list.appendChild(card(m));
         ff.cards++;

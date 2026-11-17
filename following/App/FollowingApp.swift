@@ -84,8 +84,17 @@ struct RootTabs: View {
     @State private var selection: InstaTab = .home
     @StateObject private var tabs = TabWebViews()
     @StateObject private var stories = StoriesModel()
+    @StateObject private var reminder = RefreshReminder()
 
     var body: some View {
+        VStack(spacing: 0) {
+            // From 5 days after SideStore last re-signed the app, until it re-signs it again.
+            if reminder.show { RefreshBanner(reminder: reminder) }
+            content
+        }
+    }
+
+    private var content: some View {
         ZStack {
             // The system's floating tab bar. Each page runs underneath it to the bottom of the
             // screen; the web views keep their last posts scrollable above it.
