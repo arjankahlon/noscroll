@@ -3,6 +3,7 @@ name: Build Following (.ipa for SideStore)
 # Builds an unsigned Following.ipa on every push to main that touches the app or the engine,
 # publishes it as a GitHub release, and updates following/source.json so SideStore / AltStore
 # offer the new version. SideStore signs the app with your own Apple ID when it installs it.
+# If GitHub has no free Mac, the run is cancelled after ~15 minutes; push again to retry.
 on:
   push:
     branches: [main]
