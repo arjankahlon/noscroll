@@ -377,6 +377,9 @@
       '#fl-ff .more,#fl-ff .vc,#fl-ff .ago{color:#737373}',
       '#fl-ff .vc{display:block;padding:4px 12px 0}',
       '#fl-ff .ago{display:block;padding:4px 12px 0;font-size:12px}',
+      '#fl-ff .cu{padding:28px 24px;text-align:center;border-bottom:.5px solid #efefef}',
+      '#fl-ff .cu-t{font-weight:600;font-size:16px;margin-bottom:4px}',
+      '#fl-ff .cu-s{color:#737373;font-size:14px;line-height:1.4}',
       '#fl-ff .end{padding:28px 24px 40px;text-align:center;color:#737373;font-size:15px;line-height:1.4}',
       '#fl-ff .end button{all:unset;cursor:pointer;color:#0095f6;font-weight:600}',
       '@media (prefers-color-scheme: dark){#fl-ff{background:#000;color:#f5f5f5}#fl-ff .p{border-color:#262626}#fl-ff .dots i{background:#363636}}'
@@ -728,7 +731,9 @@
   // The app's own list: what it has drawn, and where the next page starts.
   function freshState(mode) {
     return { mode: mode, shown: {}, cards: 0, next: '', more: true, started: false, loading: false, error: false, emptyRun: 0,
-      counted: {}, seenRun: 0, caughtUp: false, showSeen: false, held: 0 };
+      counted: {}, seenRun: 0, caughtUp: false, showSeen: false, held: 0,
+      // Friends, once caught up: earlier posts you've seen but not liked, from the ranked feed.
+      unliked: false, r: { next: '', more: true, started: false } };
   }
 
   // Posts you have looked at (on screen for about a second), so a reload shows what's new.
@@ -807,11 +812,45 @@
         ff.counted[key] = 1;
         if (kept > 0 && keptSeen === kept) ff.seenRun++;
         else if (kept > keptSeen) ff.seenRun = 0;
-        if (ff.seenRun >= 2 && !ff.showSeen) ff.caughtUp = true;
+        if (ff.seenRun >= 2 && !ff.showSeen && !ff.unliked) ff.caughtUp = true;
       }
       ff.next = pg.end;
       ff.more = pg.more && !!pg.end;
       ff.started = true;
+      if (!pg.end || pg.end === key) break;
+      key = pg.end;
+    }
+    return added;
+  }
+
+  // Friends, after "You're all caught up": earlier posts from private accounts that you've seen
+  // but not liked, in Instagram's suggested order (the ranked feed), under a divider.
+  function startUnliked(list) {
+    ff.unliked = true;
+    ff.caughtUp = false;
+    ff.emptyRun = 0;
+    var d = el('div', 'cu');
+    d.appendChild(el('div', 'cu-t', "You're all caught up"));
+    d.appendChild(el('div', 'cu-s', "You've seen the new posts from your friends. Here are earlier ones you haven't liked yet."));
+    list.appendChild(d);
+  }
+
+  function drawUnliked(list) {
+    var pages = (window.__flFeed && window.__flFeed.pages && window.__flFeed.pages.home) || {};
+    var added = 0, guard = 0, key = '';
+    while (pages.hasOwnProperty(key) && guard++ < 500) {
+      var pg = pages[key];
+      for (var i = 0; i < pg.items.length; i++) {
+        var m = pg.items[i];
+        if (ff.shown[m.code] || !isFriend(m) || !seen[m.code] || m.has_liked) continue;
+        ff.shown[m.code] = 1;
+        list.appendChild(card(m));
+        ff.cards++;
+        added++;
+      }
+      ff.r.next = pg.end;
+      ff.r.more = pg.more && !!pg.end;
+      ff.r.started = true;
       if (!pg.end || pg.end === key) break;
       key = pg.end;
     }
@@ -891,6 +930,10 @@
     var end = box.querySelector('.end');
     end.textContent = '';
     var hasTpl = !!(window.__flFeed && window.__flFeed.template);
+    if (ff.unliked && !ff.error) {
+      end.textContent = ff.r.more || !ff.r.started ? 'Loading more…' : "That's everything for now.";
+      return;
+    }
     if (ff.error) {
       end.appendChild(document.createTextNode("Couldn't load more posts. "));
       var retry = el('button', '', 'Try again');
@@ -963,20 +1006,26 @@
     var list = box.querySelector('.list');
     var added = drawPages(list);
     if (added) ff.emptyRun = 0;
+    // Friends: once caught up (or at the end of the feed), carry on with seen, unliked posts.
+    if (mode === 'friends' && !ff.unliked && ff.started && (ff.caughtUp || !ff.more)) startUnliked(list);
+    if (ff.unliked && drawUnliked(list)) ff.emptyRun = 0;
 
     // Load the next page when fewer than two screens of posts are left below.
     var end = box.querySelector('.end');
     var near = end.getBoundingClientRect().top - window.innerHeight < window.innerHeight * 2;
     // A run of pages with nothing to keep: keep going, but stop after 15 until you scroll.
-    var nextCursor = ff.started ? ff.next : '';
-    if (near && ff.more && !ff.caughtUp && typeof nextCursor === 'string' && !ff.loading && !ff.error && ff.emptyRun < 15 && ready) {
+    var source = ff.unliked ? 'home' : FEEDS[mode].source;
+    var nextCursor = ff.unliked ? (ff.r.started ? ff.r.next : '') : (ff.started ? ff.next : '');
+    var hasMore = ff.unliked ? ff.r.more : (ff.more && !ff.caughtUp);
+    if (near && hasMore && typeof nextCursor === 'string' && !ff.loading && !ff.error && ff.emptyRun < 15 && ready) {
       ff.loading = true;
       var state = ff;
       var before = ff.cards;
-      fetchPage(FEEDS[mode].source, nextCursor).then(function () {
+      fetchPage(source, nextCursor).then(function () {
         if (state !== ff) return;
         ff.loading = false;
         drawPages(list);
+        if (ff.unliked) drawUnliked(list);
         if (ff.cards === before) ff.emptyRun++; else ff.emptyRun = 0;
         queue();
       }, function () {
