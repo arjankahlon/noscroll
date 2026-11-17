@@ -173,11 +173,28 @@
     return null;
   }
 
+  // Your profile picture, for the Profile tab's icon (the app keeps a copy, see ProfilePic.swift).
+  var sentPic = false;
+  function sendProfilePic() {
+    if (sentPic || TAB !== 'home') return;
+    var html = document.documentElement.innerHTML;
+    var i = html.indexOf('"PolarisViewer"');
+    if (i === -1) return;
+    var m = /"profile_pic_url":"([^"]+)"/.exec(html.slice(i, i + 6000));
+    if (!m) return;
+    var url;
+    try { url = JSON.parse('"' + m[1] + '"'); } catch (e) { return; }
+    if (!/^https:\/\/[^/]*(cdninstagram\.com|fbcdn\.net)\//.test(url)) return;
+    sentPic = true;
+    post({ type: 'profilePic', value: url });
+  }
+
   function profileStep() {
+    sendProfilePic();
     if (sentUser && TAB !== 'profile') return;
     var user = findUsername();
     if (!user) return;
-    if (!sentUser) { post({ type: 'username', value: user }); sentUser = true; }
+    if (!sentUser) { post({ type: 'username', value: user }); sentUser = true; sendProfilePic(); }
     if (TAB === 'profile' && location.search.indexOf('following_profile=1') !== -1) {
       location.replace('/' + user + '/');
     }
@@ -241,6 +258,8 @@
     }
     isolated = [];
     stripBox = null;
+    var c = document.getElementById('fl-story-count');
+    if (c) c.remove();
   }
 
   function hideForStrip(el) {
@@ -297,9 +316,52 @@
     reportStripHeight(box);
   }
 
+  // Above the row: how many of the stories up now you've watched ("12/120 seen"). From
+  // Instagram's list for the row, updated from the row's own "seen" labels as you watch.
+  // And "Your story" (Instagram always shows it, with a +) only while you have a story up.
+  var storySeen = {};
+  function storyExtras(box, first) {
+    var tray = window.__flTray;
+    var row = first.parentElement;
+    var me = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || '';
+    var own = row && row.firstElementChild;
+    if (own && own !== first && !/^Story by /.test(own.getAttribute('aria-label') || '')) {
+      var active = !!own.querySelector('canvas') ||
+        !!(tray && tray.some(function (r) { return String((r.user || {}).pk) === me; }));
+      if (active) own.style.removeProperty('display');
+      else own.style.setProperty('display', 'none', 'important');
+    }
+    if (!tray) return;
+    var labels = document.querySelectorAll('[role="button"][aria-label^="Story by "]');
+    for (var i = 0; i < labels.length; i++) {
+      var lm = /^Story by (.+), (seen|not seen)$/.exec(labels[i].getAttribute('aria-label') || '');
+      if (lm && lm[2] === 'seen') storySeen[lm[1]] = true;
+    }
+    var total = 0, seenN = 0;
+    tray.forEach(function (r) {
+      var u = r.user || {};
+      if (String(u.pk) === me) return;
+      total++;
+      if ((r.seen && r.seen >= r.latest_reel_media) || storySeen[u.username]) seenN++;
+    });
+    var c = document.getElementById('fl-story-count');
+    if (!c) {
+      c = document.createElement('div');
+      c.id = 'fl-story-count';
+      c.style.cssText = 'position:absolute;top:4px;left:14px;z-index:5;font:600 12px/16px -apple-system,system-ui,sans-serif;color:#737373;pointer-events:none';
+      document.body.appendChild(c);
+    }
+    var text = seenN + '/' + total + ' seen';
+    if (c.textContent !== text) c.textContent = text;
+    // Room for the count above the circles.
+    box.style.setProperty('padding-top', '18px', 'important');
+  }
+
   function reportStripHeight(box) {
+    var firstStory = document.querySelector('[role="button"][aria-label^="Story by "]');
+    if (firstStory) storyExtras(box, firstStory);
     var h = Math.round(box.getBoundingClientRect().height);
-    if (h > 40 && h < 240 && h !== lastHeight) {
+    if (h > 40 && h < 260 && h !== lastHeight) {
       lastHeight = h;
       post({ type: 'trayHeight', value: h });
     }
@@ -318,12 +380,14 @@
   // the next page by repeating Instagram's own "load more" request with the next cursor.
   // Posts, profiles and comments open full screen over the feed (the stories layer), so you keep
   // your place.
+  // Friends is the default: each launch opens on it. A switch to Following lasts until the app
+  // is closed (sessionStorage), including pull to refresh and reloads.
   var MODE_KEY = 'following.mode';
   function feedMode() {
-    try { return localStorage.getItem(MODE_KEY) === 'friends' ? 'friends' : 'following'; } catch (e) { return 'following'; }
+    try { return sessionStorage.getItem(MODE_KEY) === 'following' ? 'following' : 'friends'; } catch (e) { return 'friends'; }
   }
   function setFeedMode(m) {
-    try { localStorage.setItem(MODE_KEY, m); } catch (e) {}
+    try { sessionStorage.setItem(MODE_KEY, m); } catch (e) {}
     document.scrollingElement.scrollTop = 0;
     queue();
   }
@@ -348,8 +412,12 @@
       '#fl-ff a{color:inherit;text-decoration:none}',
       '#fl-ff .p{border-bottom:.5px solid #efefef;padding-bottom:12px}',
       '#fl-ff .h{display:flex;align-items:center;gap:10px;padding:10px 12px}',
-      '#fl-ff .h img{width:32px;height:32px;border-radius:50%;object-fit:cover;background:#efefef}',
-      '#fl-ff .h .u{font-weight:600}',
+      '#fl-ff .h img{flex:none;width:32px;height:32px;border-radius:50%;object-fit:cover;background:#efefef}',
+      '#fl-ff .h .u{font-weight:600;flex:none}',
+      '#fl-ff .h .w{min-width:0;flex:1;display:flex;flex-direction:column}',
+      '#fl-ff .h .nl{display:flex;align-items:baseline;gap:6px;min-width:0}',
+      '#fl-ff .h .bio{color:#737373;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}',
+      '#fl-ff .h .loc{font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '#fl-ff .m{position:relative;background:#000;overflow:hidden}',
       '#fl-ff .track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;height:100%}',
       '#fl-ff .track::-webkit-scrollbar{display:none}',
@@ -377,8 +445,9 @@
       '#fl-ff .more,#fl-ff .vc,#fl-ff .ago{color:#737373}',
       '#fl-ff .vc{display:block;padding:4px 12px 0}',
       '#fl-ff .ago{display:block;padding:4px 12px 0;font-size:12px}',
+      '#fl-ff .ago.old{color:#ed4956;font-weight:700}',
       '#fl-ff .cu{padding:28px 24px;text-align:center;border-bottom:.5px solid #efefef}',
-      '#fl-ff .cu-t{font-weight:600;font-size:16px;margin-bottom:4px}',
+      '#fl-ff .cu-t{font-weight:600;font-size:16px;margin-bottom:4px;color:#1f9d55}',
       '#fl-ff .cu-s{color:#737373;font-size:14px;line-height:1.4}',
       '#fl-ff .end{padding:28px 24px 40px;text-align:center;color:#737373;font-size:15px;line-height:1.4}',
       '#fl-ff .end button{all:unset;cursor:pointer;color:#0095f6;font-weight:600}',
@@ -398,7 +467,7 @@
       if (bar) bar.remove();
       bar = document.createElement('div');
       bar.id = 'fl-modes';
-      [['following', 'Following'], ['friends', 'Friends']].forEach(function (pair) {
+      [['friends', 'Friends'], ['following', 'Following']].forEach(function (pair) {
         var b = document.createElement('button');
         b.type = 'button';
         b.dataset.mode = pair[0];
@@ -566,6 +635,127 @@
   // Debugging: lets a developer try the like request from the Mac (following/ev.sh).
   window.__flLikeRequest = likeRequest;
 
+  // Bios (for the Friends feed). The feeds' posts don't carry them, so the app asks Instagram the
+  // way its own profile page does (PolarisProfilePageContentQuery, learned by privacy-hook.js;
+  // the built-in copy is the fallback), one account at a time, and keeps the answers on the phone
+  // for a week in localStorage ("following.profiles", by user id).
+  var PROFILE_KEY = 'following.profiles', PROFILE_DAYS = 7;
+  var PROFILE_DEFAULT = { name: 'PolarisProfilePageContentQuery', doc: '40158838120366999', url: '/api/graphql', caller: 'RelayModern',
+    headers: { 'x-ig-app-id': '1217981644879628', 'x-asbd-id': '359341' },
+    vars: { enable_integrity_filters: true,
+      __relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider: true,
+      __relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider: false,
+      __relay_internal__pv__PolarisProfileInformTreatmentBannerEnabledrelayprovider: false,
+      __relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider: false,
+      __relay_internal__pv__PolarisProfileRingsGradientEnabledrelayprovider: true,
+      __relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider: true,
+      __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true } };
+  var profiles = {};
+  try { profiles = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}') || {}; } catch (e) { profiles = {}; }
+  (function () {
+    var cutoff = Date.now() - PROFILE_DAYS * 86400000;
+    for (var k in profiles) if (!profiles[k] || profiles[k].t < cutoff) delete profiles[k];
+  })();
+  var profileQueue = [], profileQueued = {}, profileBusy = 0, profilePauseUntil = 0, profileFails = 0;
+  function saveProfiles() { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profiles)); } catch (e) {} }
+  function userId(u) { return String(u.pk || u.id || ''); }
+  function profileOf(u) { return profiles[userId(u)] || null; }
+
+  function profileRequest(id) {
+    var tpl = PROFILE_DEFAULT;
+    try { tpl = JSON.parse(localStorage.getItem('following.profileTpl') || 'null') || tpl; } catch (e) {}
+    var session = freshSession();
+    if (!session || !session.fb_dtsg) return Promise.reject(new Error('no session'));
+    var params = new URLSearchParams();
+    for (var k in session) params.set(k, session[k]);
+    var vars = {};
+    for (var v in tpl.vars) vars[v] = tpl.vars[v];
+    vars.id = id;
+    params.set('fb_api_caller_class', tpl.caller || 'RelayModern');
+    params.set('fb_api_req_friendly_name', tpl.name);
+    params.set('variables', JSON.stringify(vars));
+    params.set('server_timestamps', 'true');
+    params.set('doc_id', tpl.doc);
+    var headers = {};
+    for (var h in tpl.headers) headers[h] = tpl.headers[h];
+    headers['content-type'] = 'application/x-www-form-urlencoded';
+    headers['x-fb-friendly-name'] = tpl.name;
+    headers['x-csrftoken'] = cookie('csrftoken');
+    if (session.lsd) headers['x-fb-lsd'] = session.lsd;
+    return (window.__flFetch || fetch)(tpl.url, { method: 'POST', credentials: 'include', headers: headers, body: params.toString() })
+      .then(function (r) { return r.text().then(function (t) { return { ok: r.ok, status: r.status, text: t }; }); })
+      .then(function (res) {
+        var j = null;
+        try { j = JSON.parse(res.text.replace(/^for \(;;\);/, '').split('\n')[0]); } catch (e) {}
+        var u = j && j.data && j.data.user;
+        if (!res.ok || !u || typeof u.follower_count !== 'number') { var err = new Error('profile ' + res.status); err.status = res.status; throw err; }
+        return { f: u.follower_count, b: typeof u.biography === 'string' ? u.biography : '', t: Date.now() };
+      });
+  }
+  window.__flProfileRequest = profileRequest;
+
+  function wantProfile(u) {
+    var id = userId(u);
+    if (!id || profiles[id] || profileQueued[id]) return;
+    profileQueued[id] = 1;
+    profileQueue.push(id);
+    pumpProfiles();
+  }
+  function pumpProfiles() {
+    if (profileBusy >= 3 || !profileQueue.length) return;
+    var wait = profilePauseUntil - Date.now();
+    if (wait > 0) { setTimeout(pumpProfiles, wait + 50); return; }
+    var id = profileQueue.shift();
+    profileBusy++;
+    profileRequest(id).then(function (p) {
+      profiles[id] = p;
+      profileFails = 0;
+      saveProfiles();
+      fillBios(id);
+    }, function (err) {
+      profileFails++;
+      // Too many requests, or not signed in yet: wait and try again (a minute after a 429).
+      profilePauseUntil = Date.now() + (err && err.status === 429 ? 60000 : Math.min(30000, 1000 * profileFails));
+      delete profileQueued[id];
+      profileQueue.push(id);
+      profileQueued[id] = 1;
+    }).then(function () {
+      profileBusy--;
+      setTimeout(pumpProfiles, 100);
+    });
+  }
+  window.__flProfileState = function () { return { queued: profileQueue.length, busy: profileBusy, fails: profileFails, pause: Math.max(0, profilePauseUntil - Date.now()), known: Object.keys(profiles).length }; };
+
+  // A friend: a private account.
+  function isFriend(m) { return isPrivate(m); }
+
+  // Fill in the bio on cards already drawn once an account's profile arrives.
+  function fillBios(id) {
+    if (ff.mode !== 'friends') return;
+    var heads = document.querySelectorAll('#fl-ff .nl[data-uid="' + id + '"]');
+    for (var i = 0; i < heads.length; i++) {
+      var line = heads[i];
+      if (line.querySelector('.bio')) continue;
+      var b = bioLine(line.__flUser || {});
+      if (b) line.appendChild(el('span', 'bio', b));
+    }
+  }
+
+  // A bio to show next to the name: no links, emails or line breaks; none if it's only emoji.
+  function bioLine(u) {
+    var p = profileOf(u);
+    if (!p || !p.b) return '';
+    var b = p.b
+      .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
+      .replace(/\S+@\S+\.\S+/g, '')
+      .replace(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|me|app|ly|gg|tv|us|edu|link|bio|page|shop|store)(?:\/\S*)?/gi, '')
+      .replace(/\s+/g, ' ')
+      .replace(/^[\s|•·,;:-]+|[\s|•·,;:-]+$/g, '');
+    // Nothing but emoji: no bio. (@mentions count as words.)
+    try { if (!/[\p{L}\p{N}]/u.test(b)) return ''; } catch (e) { if (!/[A-Za-z0-9]/.test(b)) return ''; }
+    return b;
+  }
+
   function toggleLike(m, btn, label) {
     var want = !m.has_liked;
     var setUi = function (liked) {
@@ -599,7 +789,32 @@
       x.addEventListener('click', function (e) { e.preventDefault(); openOver('/' + name + '/'); });
     });
     h.appendChild(av);
-    h.appendChild(un);
+    // Name (with the bio after it in Friends, on one line), and the post's location under it.
+    var who = el('div', 'w');
+    var line = el('div', 'nl');
+    line.appendChild(un);
+    if (ff.mode === 'friends') {
+      var bio = bioLine(user);
+      if (bio) line.appendChild(el('span', 'bio', bio));
+      else if (!profileOf(user)) {
+        // Not looked up yet: the bio is added when it arrives.
+        line.dataset.uid = userId(user);
+        line.__flUser = user;
+        wantProfile(user);
+      }
+    }
+    who.appendChild(line);
+    var loc = m.location;
+    if (loc && loc.name) {
+      var la = el('a', 'loc', loc.name);
+      var lpath = loc.pk ? '/explore/locations/' + loc.pk + '/' : '';
+      if (lpath) {
+        la.href = lpath;
+        la.addEventListener('click', function (e) { e.preventDefault(); openOver(lpath); });
+      }
+      who.appendChild(la);
+    }
+    h.appendChild(who);
     p.appendChild(h);
 
     var items = (m.carousel_media && m.carousel_media.length) ? m.carousel_media : [m];
@@ -651,9 +866,22 @@
     var t = el('div', 't');
     var renderLikes = function () {
       t.textContent = '';
-      // Shown even when the poster hid the count: Instagram still sends it.
-      if (typeof m.like_count !== 'number') return;
       var top = (m.top_likers && m.top_likers[0]) || (m.facepile_top_likers && m.facepile_top_likers[0] && m.facepile_top_likers[0].username);
+      // The poster hid the count: Instagram doesn't send the real one (like_count is a stand-in,
+      // always about 3), so say it the way Instagram does.
+      if (m.like_and_view_counts_disabled) {
+        if (top) {
+          t.appendChild(document.createTextNode('Liked by '));
+          t.appendChild(el('b', '', String(top)));
+          t.appendChild(document.createTextNode(' and '));
+          t.appendChild(el('b', '', 'others'));
+        } else if (m.has_liked) {
+          t.appendChild(document.createTextNode('Liked by '));
+          t.appendChild(el('b', '', 'you'));
+        }
+        return;
+      }
+      if (typeof m.like_count !== 'number') return;
       if (top && m.like_count > 1) {
         t.appendChild(document.createTextNode('Liked by '));
         t.appendChild(el('b', '', String(top)));
@@ -706,14 +934,15 @@
       vc.addEventListener('click', function (e) { e.preventDefault(); openOver('/p/' + m.code + '/'); });
       p.appendChild(vc);
     }
-    if (m.taken_at) p.appendChild(el('span', 'ago', ago(m.taken_at)));
+    // 3 days old or more ("3 days ago", or a date): bold red, so older posts stand out.
+    if (m.taken_at) p.appendChild(el('span', 'ago' + (Math.round((Date.now() / 1000 - m.taken_at) / 86400) >= 3 ? ' old' : ''), ago(m.taken_at)));
     return p;
   }
 
   // Both Home feeds are drawn by the app from Instagram's feed data:
+  //   Friends:   newest first (Instagram's Following feed), keeping only private accounts.
   //   Following: Instagram's suggested order (its ranked feed, as in the app's main feed), keeping
   //              only accounts you follow (no "Suggested for you" posts, no ads).
-  //   Friends:   newest first (Instagram's Following feed), keeping only private accounts.
   var FEEDS = {
     following: {
       source: 'home',
@@ -783,7 +1012,7 @@
   var FF_ID = 'fl-ff';
   var bootNudges = 0, lastBootNudge = 0;
 
-  function isFriend(m) {
+  function isPrivate(m) {
     var u = m.user || {};
     if (typeof u.is_private === 'boolean') return u.is_private;
     return (window.__flPrivacy || {})[(u.username || '').toLowerCase()] === true;
@@ -833,7 +1062,7 @@
     return added;
   }
 
-  // Friends, after "You're all caught up": earlier posts from private accounts that you've seen
+  // Friends, after "You're all caught up": earlier posts from friends that you've seen
   // but not liked, in Instagram's suggested order (the ranked feed), under a divider.
   function startUnliked(list) {
     if (!window.__flFirstCard) window.__flFirstCard = Math.round(performance.now());
@@ -853,7 +1082,8 @@
       var pg = pages[key];
       for (var i = 0; i < pg.items.length; i++) {
         var m = pg.items[i];
-        if (ff.shown[m.code] || !isFriend(m) || m.has_liked || !(seen[m.code] || m.is_seen === true)) continue;
+        if (ff.shown[m.code] || m.has_liked || !(seen[m.code] || m.is_seen === true)) continue;
+        if (!isFriend(m)) continue;
         ff.shown[m.code] = 1;
         list.appendChild(card(m));
         ff.cards++;
@@ -953,7 +1183,7 @@
       end.appendChild(retry);
     } else if ((ff.caughtUp || (!ff.more && hasTpl)) && !ff.showSeen && ff.held > 0) {
       var t = el('div', '', "You're all caught up");
-      t.style.cssText = 'font-weight:600;color:inherit;margin-bottom:4px';
+      t.className = 'cu-t';
       end.appendChild(t);
       end.appendChild(document.createTextNode("You've seen the new posts. "));
       var more = el('button', '', 'Show posts you\'ve seen');
@@ -964,7 +1194,8 @@
       });
       end.appendChild(more);
     } else if (!ff.more && hasTpl) {
-      end.textContent = ff.cards ? "You're all caught up" : cfg.none;
+      if (ff.cards) end.appendChild(el('div', 'cu-t', "You're all caught up"));
+      else end.textContent = cfg.none;
     } else if (!ff.cards) {
       end.textContent = cfg.looking;
     } else {

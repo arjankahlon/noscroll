@@ -85,6 +85,16 @@ struct RootTabs: View {
     @StateObject private var tabs = TabWebViews()
     @StateObject private var stories = StoriesModel()
     @StateObject private var reminder = RefreshReminder()
+    @ObservedObject private var profilePic = ProfilePic.shared
+
+    /// Icons only, no labels. Profile shows your own picture once the app has it.
+    @ViewBuilder private func tabLabel(_ tab: InstaTab) -> some View {
+        if tab == .profile, let pic = profilePic.image {
+            Image(uiImage: pic).renderingMode(.original).accessibilityLabel(tab.title)
+        } else {
+            Image(systemName: tab.symbol).accessibilityLabel(tab.title)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -112,7 +122,7 @@ struct RootTabs: View {
                         .ignoresSafeArea(.container, edges: .bottom)
                         .toolbar(tabs.barHidden.contains(tab) ? .hidden : .visible, for: .tabBar)
                         .tag(tab)
-                        .tabItem { Label(tab.title, systemImage: tab.symbol) }
+                        .tabItem { tabLabel(tab) }
                 }
             }
             .tint(.primary)

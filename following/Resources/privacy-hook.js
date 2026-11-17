@@ -9,6 +9,7 @@
  *    the cursor it was asked for with ('' for the first page).
  * 4. Like requests: the id and headers of Instagram's own like and unlike requests are kept in
  *    localStorage ("following.likeTpl.like" / ".unlike") for the Friends feed's heart.
+ * 5. Stories: the story row's list (window.__flTray), for the "seen / total" count above it.
  * 3. How to ask for the next page: the request Instagram makes for it (address, form fields,
  *    headers) is kept in window.__flFeed.template and in localStorage ("following.feedTemplate"),
  *    and the session fields of Instagram's latest request in window.__flFeed.common, so the
@@ -64,6 +65,9 @@
       var u = node.username.toLowerCase();
       if (map[u] !== node.is_private) { map[u] = node.is_private; dirty = true; }
     }
+    // The story row's list (Instagram's order, with what you've seen), for the stories count.
+    var tray = node.xdt_api__v1__feed__reels_tray;
+    if (tray && Array.isArray(tray.tray)) { window.__flTray = tray.tray; window.__flTrayVersion = (window.__flTrayVersion || 0) + 1; }
     var conn = node.xdt_api__v1__feed__timeline__connection;
     if (conn && typeof conn === 'object' && conn.edges) keepPage(conn, ctx);
     for (var k in node) {
@@ -87,7 +91,8 @@
   }
 
   function scan(text, ctx) {
-    if (!text || (text.indexOf('is_private') === -1 && text.indexOf('timeline__connection') === -1)) return;
+    if (!text || (text.indexOf('is_private') === -1 && text.indexOf('timeline__connection') === -1 &&
+        text.indexOf('reels_tray') === -1)) return;
     // Some responses are several JSON documents in a row, or start with "for (;;);".
     var parts = text.replace(/^for \(;;\);/, '').split(/\n(?=\{)/);
     for (var i = 0; i < parts.length; i++) {
@@ -133,6 +138,13 @@
       var hs = headersObject(headers);
       delete hs['x-csrftoken']; delete hs['x-fb-lsd']; delete hs['x-fb-entry-nonce'];
       try { localStorage.setItem('following.likeTpl.' + likeKind, JSON.stringify({ name: fname, doc: p.get('doc_id'), url: String(url), headers: hs, caller: p.get('fb_api_caller_class') || 'RelayModern' })); } catch (e) {}
+    }
+    // Instagram's profile request (follower count and bio): kept the same way, so the Home feeds
+    // can look up the accounts in them (extras.js, section 7).
+    if (fname === 'PolarisProfilePageContentQuery' && p.get('doc_id') && vars) {
+      var ph = headersObject(headers);
+      delete ph['x-csrftoken']; delete ph['x-fb-lsd']; delete ph['x-fb-entry-nonce'];
+      try { localStorage.setItem('following.profileTpl', JSON.stringify({ name: fname, doc: p.get('doc_id'), url: String(url), headers: ph, caller: p.get('fb_api_caller_class') || 'RelayModern', vars: vars })); } catch (e) {}
     }
     if (vars && p.get('doc_id') && (vars.variant === 'home' || (vars.data && vars.data.pagination_source === 'following'))) {
       ctx.after = typeof vars.after === 'string' ? vars.after : '';

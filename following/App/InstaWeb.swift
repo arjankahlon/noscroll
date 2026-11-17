@@ -152,6 +152,10 @@ final class InstaWebController: NSObject, ObservableObject {
             UserDefaults.standard.set(user, forKey: InstaWeb.usernameKey)
             return
         }
+        if type == "profilePic", let address = dict["value"] as? String {
+            ProfilePic.shared.update(from: address)
+            return
+        }
         if type == "refreshed" {
             webView.scrollView.refreshControl?.endRefreshing()
             return

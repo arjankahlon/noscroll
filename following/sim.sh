@@ -29,6 +29,7 @@ cat > "$APP/Info.plist" <<'EOF'
 <key>MinimumOSVersion</key><string>17.0</string>
 <key>UIDeviceFamily</key><array><integer>1</integer></array>
 <key>UILaunchScreen</key><dict/>
+<key>UIUserInterfaceStyle</key><string>Light</string>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
 <key>UIBackgroundModes</key><array><string>audio</string></array>
 </dict></plist>
