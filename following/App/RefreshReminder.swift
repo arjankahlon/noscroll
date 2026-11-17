@@ -36,10 +36,10 @@ final class RefreshReminder: ObservableObject {
     var expiryText: String {
         guard let expires else { return "" }
         let hours = expires.timeIntervalSinceNow / 3600
-        if hours <= 0 { return "Expired" }
-        if hours < 24 { return "Expires today" }
+        if hours <= 0 { return "expired" }
+        if hours < 24 { return "expires today" }
         let days = Int((hours / 24).rounded(.down))
-        return days == 1 ? "Expires in 1 day" : "Expires in \(days) days"
+        return days == 1 ? "1 day left" : "\(days) days left"
     }
 
     /// The creation and expiry dates of the profile SideStore signed this copy with. None in the
@@ -67,27 +67,24 @@ final class RefreshReminder: ObservableObject {
     }
 }
 
-/// A slim orange strip under the status bar.
+/// A slim orange strip under the status bar: one centred line.
 struct RefreshBanner: View {
     @ObservedObject var reminder: RefreshReminder
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.clockwise.circle.fill")
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 14, weight: .bold))
+            Text("Refresh in SideStore")
                 .font(.system(size: 15, weight: .semibold))
-            Text("VPN on, then Refresh in SideStore")
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Spacer(minLength: 4)
-            Text(reminder.expiryText)
-                .font(.system(size: 12, weight: .medium))
-                .opacity(0.9)
-                .lineLimit(1)
+            Text("· \(reminder.expiryText)")
+                .font(.system(size: 15, weight: .regular))
+                .opacity(0.85)
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
         .foregroundStyle(.white)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .background(Color.orange.ignoresSafeArea(edges: .top))
         .accessibilityElement(children: .combine)
