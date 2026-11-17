@@ -12,6 +12,10 @@ on:
       - "ios/NoScroll/Resources/noscroll.js"
       - ".github/workflows/build-following.yml"
   workflow_dispatch:
+  # One-time: build at 6:00 pm ET on Tue Nov 17 2026 (23:00 UTC), when GitHub's Macs are freer.
+  # Remove after it has run (cron repeats yearly on this date).
+  schedule:
+    - cron: "0 23 17 11 *"
 
 permissions:
   contents: write
