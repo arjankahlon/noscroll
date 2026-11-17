@@ -177,7 +177,16 @@ final class TabWebViews: ObservableObject {
     }
 
     func goHome(_ tab: InstaTab) {
-        controller(for: tab).loadStart()
+        let c = controller(for: tab)
+        #if DEBUG
+        DebugHooks.log("goHome \(tab) url=\(c.webView.url?.absoluteString ?? "nil") onFeed=\(StoriesModel.isFollowingFeed(c.webView.url))")
+        #endif
+        // Home, already on the feed: refresh in place (quick). Otherwise back to the start page.
+        if tab == .home, StoriesModel.isFollowingFeed(c.webView.url) {
+            c.refreshOrReload()
+        } else {
+            c.loadStart()
+        }
     }
 
     /// After you sign in on one tab, the others are still showing the sign-in

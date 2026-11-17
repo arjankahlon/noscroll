@@ -123,9 +123,26 @@ final class InstaWebController: NSObject, ObservableObject {
     }
 
     @objc private func pullToRefresh(_ sender: UIRefreshControl) {
-        webView.reload()
         onRefresh?()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { sender.endRefreshing() }
+        refreshOrReload { [weak sender] quick in
+            // A quick refresh ends the spinner when the new posts are in ("refreshed" below).
+            if !quick { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { sender?.endRefreshing() } }
+        }
+        // Never spin forever.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak sender] in sender?.endRefreshing() }
+    }
+
+    /// The Home feeds refresh in place (extras.js, window.__flRefresh): one request, the current
+    /// posts stay up until the new ones arrive. Anything else, or if the page isn't ready, reloads.
+    func refreshOrReload(_ completion: ((Bool) -> Void)? = nil) {
+        webView.evaluateJavaScript("window.__flRefresh ? window.__flRefresh() : false") { [weak self] result, _ in
+            let quick = (result as? Bool) == true || (result as? NSNumber)?.boolValue == true
+            #if DEBUG
+            DebugHooks.log("refreshOrReload result=\(String(describing: result)) quick=\(quick)")
+            #endif
+            if !quick { self?.webView.reload() }
+            completion?(quick)
+        }
     }
 
     fileprivate func receive(_ body: Any) {
@@ -133,6 +150,10 @@ final class InstaWebController: NSObject, ObservableObject {
         if type == "username", let user = dict["value"] as? String,
            user.range(of: "^[A-Za-z0-9._]{1,30}$", options: .regularExpression) != nil {
             UserDefaults.standard.set(user, forKey: InstaWeb.usernameKey)
+            return
+        }
+        if type == "refreshed" {
+            webView.scrollView.refreshControl?.endRefreshing()
             return
         }
         onMessage?(type, dict["value"])

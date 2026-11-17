@@ -988,6 +988,45 @@
     fetchPage(other, '').catch(function () { prefetched[other] = false; });
   }
 
+  // Refresh in place (pull to refresh, or tapping Home while on Home): ask Instagram again for
+  // the first page of this feed, keep the current posts on screen until it arrives, then redraw.
+  // Much faster than reloading the whole page. Returns false if it can't (the app then reloads).
+  var refreshing = false;
+  window.__flRefresh = function () {
+    var feed = window.__flFeed || {};
+    var ready = !!(feed.template && (feed.live || (feed.common && feed.common.fb_dtsg && !feed.staleTemplate)));
+    if (TAB !== 'home' || !onFollowingFeed() || !signedIn() || !ready || !document.getElementById(FF_ID)) return false;
+    if (refreshing) return true;
+    refreshing = true;
+    var mode = feedMode();
+    var src = FEEDS[mode].source;
+    var other = FEEDS[mode === 'friends' ? 'following' : 'friends'].source;
+    var done = function () {
+      refreshing = false;
+      post({ type: 'refreshed' });
+    };
+    var start = function (source) {
+      // A new first page; the cursor chain then follows its fresh cursors (older pages are left
+      // unused).
+      delete (feed.pages[source] || {})[''];
+      return fetchPage(source, '');
+    };
+    start(src).then(function () {
+      var box = document.getElementById(FF_ID);
+      if (box) box.remove();          // redrawn from the new first page on the next step
+      ff = freshState(mode);
+      document.scrollingElement.scrollTop = 0;
+      if (!window.__flRefreshedAt) window.__flRefreshedAt = Math.round(performance.now());
+      queue();
+      done();
+      prefetched[other] = true;
+      start(other).catch(function () { prefetched[other] = false; });
+    }, function () {
+      done();
+    });
+    return true;
+  };
+
   function ownFeedStep() {
     var root = document.documentElement;
     var on = TAB === 'home' && onFollowingFeed() && signedIn();
