@@ -177,13 +177,13 @@ struct SettingsView: View {
             Form {
                 Section {
                     FeedbackLine { dismiss() }
-                }
-                Section {
                     Picker("Appearance", selection: $settings.appearance) {
                         ForEach(AppSettings.Appearance.allCases) { Text($0.title).tag($0) }
                     }
                     Toggle("Grayscale", isOn: $settings.grayscale)
                 }
+                // A little closer to Muted accounts than the other sections are.
+                .listSectionSpacing(24)
                 Section {
                     NavigationLink {
                         MutedAccountsView()
@@ -247,6 +247,8 @@ struct SettingsView: View {
                     }
                 }
             }
+            // Less empty space above the first block.
+            .contentMargins(.top, 12, for: .scrollContent)
             .navigationTitle("App settings")
             // Follows Appearance right away (the pane is its own layer above the app).
             .navigationBarTitleDisplayMode(.inline)
