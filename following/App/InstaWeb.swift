@@ -161,6 +161,8 @@ final class InstaWebController: NSObject, ObservableObject {
 
     @objc private func pullToRefresh(_ sender: UIRefreshControl) {
         onRefresh?()
+        // Also look for a newer build on GitHub (about 1 KB).
+        NotificationCenter.default.post(name: RefreshReminder.checkNow, object: nil)
         refreshOrReload { [weak sender] quick in
             // A quick refresh ends the spinner when the new posts are in ("refreshed" below).
             if !quick { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { sender?.endRefreshing() } }

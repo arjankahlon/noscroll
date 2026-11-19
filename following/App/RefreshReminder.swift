@@ -4,8 +4,9 @@ import UIKit
 /// The orange "refresh in SideStore" banner.
 ///
 /// It also shows when a newer build is waiting: the app reads the SideStore source on GitHub
-/// (following/source.json, about 2.5 KB, which each GitHub build updates) at most once every
-/// 2 hours, never in the first 20 seconds after launch, and compares the newest build number there
+/// (following/source.json, about 1 KB compressed, which each GitHub build updates) each time the
+/// app is opened or pulled to refresh (at most once a minute), never in the first 20 seconds
+/// after launch, and compares the newest build number there
 /// with its own. The newest build it has seen is remembered, so the banner is back at once on the
 /// next launch. Updating in SideStore installs the new build and re-signs it,
 /// which clears both reasons for the banner.
@@ -26,7 +27,10 @@ final class RefreshReminder: ObservableObject {
     private static let lastCheckKey = "following.updateCheckedAt"
     private static let latestKey = "following.latestBuild"
     private static let latestVersionKey = "following.latestVersion"
-    static let checkEvery: TimeInterval = 2 * 3600
+    /// Just enough to skip duplicates (opening the app can ask twice in a row).
+    static let checkEvery: TimeInterval = 60
+    /// Posted on pull to refresh: check GitHub for a newer build now.
+    static let checkNow = Notification.Name("following.checkForUpdate")
 
     static let sourceURL = URL(string: "https://raw.githubusercontent.com/arjankahlon/noscroll/main/following/source.json")!
 
@@ -36,6 +40,9 @@ final class RefreshReminder: ObservableObject {
     init() {
         update()
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.update() }
+        }
+        NotificationCenter.default.addObserver(forName: Self.checkNow, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.update() }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
