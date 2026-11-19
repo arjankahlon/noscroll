@@ -85,12 +85,15 @@ struct RootTabs: View {
     @StateObject private var tabs = TabWebViews()
     @StateObject private var stories = StoriesModel()
     @StateObject private var reminder = RefreshReminder()
+    @ObservedObject private var dmBadge = DMBadge.shared
     @ObservedObject private var profilePic = ProfilePic.shared
 
     /// Icons only, no labels. Profile shows your own picture once the app has it.
     @ViewBuilder private func tabLabel(_ tab: InstaTab) -> some View {
         if tab == .profile, let pic = profilePic.image {
             Image(uiImage: pic).renderingMode(.original).accessibilityLabel(tab.title)
+        } else if tab == .messages {
+            Image(uiImage: PlaneIcon.image).renderingMode(.template).accessibilityLabel(tab.title)
         } else {
             Image(systemName: tab.symbol).accessibilityLabel(tab.title)
         }
@@ -123,6 +126,7 @@ struct RootTabs: View {
                         .toolbar(tabs.barHidden.contains(tab) ? .hidden : .visible, for: .tabBar)
                         .tag(tab)
                         .tabItem { tabLabel(tab) }
+                        .badge(tab == .messages ? dmBadge.count : 0)
                 }
             }
             .tint(.primary)
@@ -207,4 +211,27 @@ final class TabWebViews: ObservableObject {
     func didShow(_ tab: InstaTab) {
         controller(for: tab).reloadIfSignedOut()
     }
+}
+
+/// The Messages tab's icon: the same paper plane as the Share button on posts (an outlined plane
+/// pointing up and to the right), drawn at the tab bar's usual icon size.
+enum PlaneIcon {
+    static let image: UIImage = {
+        let size = CGSize(width: 26, height: 26)
+        let img = UIGraphicsImageRenderer(size: size).image { _ in
+            // The 24 x 24 drawing from extras.js (PLANE), scaled to fit with room for the line.
+            let s = (size.width - 2) / 24, o: CGFloat = 1
+            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: o + x * s, y: o + y * s) }
+            let path = UIBezierPath()
+            path.move(to: p(21.5, 2.5)); path.addLine(to: p(2.5, 9.8)); path.addLine(to: p(9.8, 13))
+            path.addLine(to: p(13, 20.5)); path.close()
+            path.move(to: p(9.8, 13)); path.addLine(to: p(21.5, 2.5))
+            path.lineWidth = 2
+            path.lineJoinStyle = .round
+            path.lineCapStyle = .round
+            UIColor.black.setStroke()
+            path.stroke()
+        }
+        return img.withRenderingMode(.alwaysTemplate)
+    }()
 }

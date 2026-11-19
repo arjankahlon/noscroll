@@ -167,6 +167,10 @@ final class InstaWebController: NSObject, ObservableObject {
             ProfilePic.shared.update(from: address)
             return
         }
+        if type == "dmBadge" {
+            DMBadge.shared.count = (dict["value"] as? Int) ?? (dict["value"] as? NSNumber)?.intValue ?? 0
+            return
+        }
         if type == "refreshed" {
             webView.scrollView.refreshControl?.endRefreshing()
             return
@@ -278,4 +282,12 @@ struct InstaWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {}
+}
+
+/// How many chats have something unread (Instagram's own count), for the red badge on the
+/// Messages tab.
+@MainActor
+final class DMBadge: ObservableObject {
+    static let shared = DMBadge()
+    @Published var count = 0
 }

@@ -1567,6 +1567,21 @@
     btn.click();
   }
 
+  // Unread chats: the number on Instagram's own Messages button (its tab bar is hidden, but
+  // still there), which counts chats with something unread, not messages. Sent to the app for
+  // the red badge on the Messages tab.
+  var lastDm = -1;
+  function dmBadgeStep() {
+    var a = document.querySelector('a[href="/direct/inbox/"]');
+    if (!a) return;
+    var tag = a.querySelector('[aria-label^="Direct messaging"]');
+    var m = tag && /(\d+)/.exec(tag.getAttribute('aria-label') || '');
+    var n = m ? parseInt(m[1], 10) : 0;
+    if (n === lastDm) return;
+    lastDm = n;
+    post({ type: 'dmBadge', value: n });
+  }
+
   /* ---------- run ---------- */
   var queued = false;
   function tick() {
@@ -1588,6 +1603,7 @@
     shareAppsStep();
     noRepostStep();
     storyAdStep();
+    if (TAB === 'home' || TAB === 'messages') dmBadgeStep();
     // The app's feed is in place (or this isn't the Home feed): show the page.
     if (!feedCoverNeeded()) document.documentElement.classList.remove('fl-early');
   }
