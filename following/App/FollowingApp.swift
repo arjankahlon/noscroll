@@ -87,6 +87,8 @@ struct RootTabs: View {
     @StateObject private var reminder = RefreshReminder()
     @ObservedObject private var dmBadge = DMBadge.shared
     @ObservedObject private var guide = Guide.shared
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var settingsPane = SettingsPane.shared
     @ObservedObject private var profilePic = ProfilePic.shared
 
     /// Icons only, no labels. Profile shows your own picture once the app has it.
@@ -113,6 +115,16 @@ struct RootTabs: View {
         }
         // How to refresh in SideStore: from the (i) above the stories or on the orange banner.
         .fullScreenCover(isPresented: $guide.show) { RefreshGuideView(reminder: reminder) }
+        // The app's settings: from the Following icon on your profile. Pages reload when it
+        // closes if anything changed.
+        .fullScreenCover(isPresented: $settingsPane.show, onDismiss: {
+            guard settings.changed else { return }
+            settings.markSeen()
+            tabs.applySettings()
+            reminder.update()
+        }) { SettingsView() }
+        // Grayscale and Appearance: everything, tab bar and banners included, at once.
+        .followsLook()
     }
 
     private var content: some View {
@@ -123,7 +135,7 @@ struct RootTabs: View {
                 get: { selection },
                 set: { newValue in
                     // A light tap you can feel on every tab bar button.
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    if settings.isOn("hapticTabs") { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
                     // Tapping the tab you are already on goes back to its start page.
                     if newValue == selection { tabs.goHome(newValue) }
                     selection = newValue
@@ -174,6 +186,7 @@ struct RootTabs: View {
             tabs.controller(for: .messages).open(Guide.feedbackURL)
         }
         .onAppear {
+            settings.unmuter = { [weak tabs] id in await tabs?.unmute(id) ?? false }
             stories.bannerShown = reminder.show
             stories.attach(home: tabs.controller(for: .home), strip: tabs.controller(for: .stories))
         }
@@ -225,6 +238,21 @@ final class TabWebViews: ObservableObject {
 
     /// After you sign in on one tab, the others are still showing the sign-in
     /// page. Reload them when you switch to them.
+    /// Unmute an account (posts and stories) through Instagram, from the Home page.
+    func unmute(_ id: String) async -> Bool {
+        let js = """
+        return await window.__flIgAction('/api/v1/friendships/unmute_posts_or_story_from_follow/',
+          { target_posts_author_id: id, target_reel_author_id: id }).then(function () { return true; }, function () { return false; });
+        """
+        let result = try? await controller(for: .home).webView.callAsyncJavaScript(js, arguments: ["id": id], contentWorld: .page)
+        return (result as? Bool) == true || (result as? NSNumber)?.boolValue == true
+    }
+
+    /// Settings changed: every page gets the new settings (and reloads).
+    func applySettings() {
+        for c in controllers.values { c.applySettings() }
+    }
+
     func didShow(_ tab: InstaTab) {
         controller(for: tab).reloadIfSignedOut()
         // Back on Home: a "You're all caught up" check on screen draws itself in again.

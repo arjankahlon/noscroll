@@ -69,14 +69,16 @@ final class InstaWebController: NSObject, ObservableObject {
     var onRefresh: (() -> Void)?
     /// Called when a page this browser loads starts to show (the first paint is coming).
     var onCommit: (() -> Void)?
+    private let content: WKUserContentController
 
-    init(tab: InstaTab) {
-        self.tab = tab
-
-        let content = WKUserContentController()
+    /// The page scripts: the app's settings (window.__FL), the NoScroll engine and privacy hook at
+    /// document start, extras.js at document end.
+    private static func installScripts(_ content: WKUserContentController, tab: InstaTab) {
+        content.removeAllUserScripts()
+        content.addUserScript(WKUserScript(source: AppSettings.shared.pageScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // The engine runs at document start so hidden parts never paint.
         let bootstrap = """
-        window.__NOSCROLL_CONFIG = { "bundle": \(InstaWeb.rulesJSON), "settings": {}, "telemetry": false };
+        window.__NOSCROLL_CONFIG = { "bundle": \(InstaWeb.rulesJSON), "settings": \(AppSettings.shared.engineSettingsJSON), "telemetry": false };
         \(InstaWeb.engineSource)
         """
         var useEngine = true
@@ -91,6 +93,21 @@ final class InstaWebController: NSObject, ObservableObject {
             .filter { $0.isNumber || $0 == "." }
         content.addUserScript(WKUserScript(source: "window.__FOLLOWING_TAB = '\(tab.title.lowercased())';\nwindow.__FOLLOWING_VERSION = '\(version)';\n" + InstaWeb.extrasSource,
                                            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+    }
+
+    /// Settings changed: new scripts for the next load, and reload what's showing.
+    func applySettings() {
+        Self.installScripts(content, tab: tab)
+        guard loaded else { return }
+        webView.reload()
+    }
+
+    init(tab: InstaTab) {
+        self.tab = tab
+
+        let content = WKUserContentController()
+        self.content = content
+        Self.installScripts(content, tab: tab)
 
         let cfg = WKWebViewConfiguration()
         cfg.userContentController = content
@@ -177,13 +194,25 @@ final class InstaWebController: NSObject, ObservableObject {
             return
         }
         if type == "haptic" {
+            let on = AppSettings.shared
             if (dict["value"] as? String) == "tap" {
+                guard on.isOn("hapticTabs") else { return }
                 // Switching between Friends and Following: the tab bar's light tap.
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             } else {
                 // The "success" tap as the caught-up check finishes drawing.
+                guard on.isOn("hapticCheck") else { return }
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             }
+            return
+        }
+        if type == "muted", let v = dict["value"] as? [String: Any],
+           let id = v["id"] as? String, let name = v["username"] as? String {
+            AppSettings.shared.setMuted(id: id, username: name, muted: (v["muted"] as? Bool) ?? false)
+            return
+        }
+        if type == "showSettings" {
+            SettingsPane.shared.show = true
             return
         }
         if type == "showGuide" {

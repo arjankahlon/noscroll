@@ -16,6 +16,7 @@ final class Guide: ObservableObject {
 /// The pictures are simple drawings of what you tap, not screenshots.
 struct RefreshGuideView: View {
     @ObservedObject var reminder: RefreshReminder
+    @ObservedObject private var settings = AppSettings.shared
     @Environment(\.dismiss) private var dismiss
 
     /// Instagram's purple, for the Back button.
@@ -105,6 +106,7 @@ struct RefreshGuideView: View {
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(.systemBackground))
+        .followsLook()
     }
 
     /// A cropped screenshot of SideStore.

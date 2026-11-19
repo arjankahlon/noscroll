@@ -65,6 +65,11 @@
       var u = node.username.toLowerCase();
       if (map[u] !== node.is_private) { map[u] = node.is_private; dirty = true; }
     }
+    // Account ids by username (for Mute / Unmute in a profile's menu).
+    if (typeof node.username === 'string') {
+      var uid = String(node.pk || node.id || '');
+      if (/^\d+$/.test(uid)) (window.__flUserIds = window.__flUserIds || {})[node.username.toLowerCase()] = uid;
+    }
     // The story row's list (Instagram's order, with what you've seen), for the stories count.
     var tray = node.xdt_api__v1__feed__reels_tray;
     if (tray && Array.isArray(tray.tray)) { window.__flTray = tray.tray; window.__flTrayVersion = (window.__flTrayVersion || 0) + 1; }

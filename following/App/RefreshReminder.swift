@@ -109,11 +109,14 @@ final class RefreshReminder: ObservableObject {
 
     /// The banner's line: a new build, or the 7-day signing clock.
     var bannerTitle: String {
-        updateVersion != nil ? "LocalDevVPN → Update in SideStore" : "LocalDevVPN → Refresh in SideStore"
+        showsUpdate ? "LocalDevVPN → Update in SideStore" : "LocalDevVPN → Refresh in SideStore"
     }
 
+    /// The banner is about a new version (not just the 7-day clock).
+    var showsUpdate: Bool { updateVersion != nil }
+
     var bannerDetail: String {
-        if let v = updateVersion { return "v\(v) ready" }
+        if showsUpdate, let v = updateVersion { return "v\(v) ready" }
         return expiryText
     }
 

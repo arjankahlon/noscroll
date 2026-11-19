@@ -38,7 +38,6 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         # Always light, like the app's own feed design, even when the phone is in dark mode.
-        UIUserInterfaceStyle: Light
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
         # Picture in Picture keeps playing outside the app.

@@ -18,6 +18,19 @@
   window.__followingExtras = true;
 
   var TAB = window.__FOLLOWING_TAB || '';
+  // The app's settings (Settings pane, opened from the Following icon on your profile): switches
+  // are on unless set to false.
+  function S(key) { var f = window.__FL; return !f || f[key] !== false; }
+  // Red dates from this many days old (a setting; 3 unless changed).
+  var OLD_DAYS = (window.__FL && window.__FL.oldDays > 0) ? window.__FL.oldDays : 3;
+
+  // Colors that follow light and dark mode, for the labels the app adds.
+  (function () {
+    var st = document.createElement('style');
+    st.textContent = ':root{--fl-strong:#000;--fl-muted:#737373}' +
+      '@media (prefers-color-scheme: dark){:root{--fl-strong:#f5f5f5;--fl-muted:#a8a8a8}}';
+    (document.head || document.documentElement).appendChild(st);
+  })();
   // Debugging only: localStorage "following.plain" = "1" or "2" turns these extras off for testing.
   try { if (/^[12]$/.test(localStorage.getItem('following.plain') || '')) return; } catch (e) {}
 
@@ -378,20 +391,21 @@
     if (!v && window.__FOLLOWING_VERSION) {
       v = document.createElement('div');
       v.id = 'fl-version';
-      v.style.cssText = 'position:absolute;top:1px;right:14px;z-index:5;display:flex;align-items:center;gap:6px;font:700 17px/21px -apple-system,system-ui,sans-serif;color:#000;pointer-events:none';
+      v.style.cssText = 'position:absolute;top:1px;right:14px;z-index:5;display:flex;align-items:center;gap:6px;font:700 17px/21px -apple-system,system-ui,sans-serif;color:var(--fl-strong);pointer-events:none';
       v.appendChild(document.createTextNode('Following v' + window.__FOLLOWING_VERSION));
       // (i): the app's "How to refresh" page.
       var info = document.createElement('span');
       info.textContent = 'i';
       info.setAttribute('role', 'button');
       info.setAttribute('aria-label', 'How to refresh');
-      info.style.cssText = 'pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1.8px solid #000;border-radius:50%;box-sizing:border-box;font:700 12px/1 Georgia,serif;cursor:pointer';
+      info.style.cssText = 'pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1.8px solid currentColor;border-radius:50%;box-sizing:border-box;font:700 12px/1 Georgia,serif;cursor:pointer';
       info.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); post({ type: 'showGuide' }); });
       if (window.__flBanner) info.style.display = 'none';
       v.appendChild(info);
       document.body.appendChild(v);
     }
-    var text = seenN + '/' + total + ' stories seen';
+    var text = S('storyCount') ? seenN + '/' + total + ' stories seen' : '';
+    c.style.display = text ? '' : 'none';
     if (c.textContent !== text) {
       c.textContent = text;
       // The app passes it on to the Home feed, for under "You're all caught up".
@@ -444,8 +458,22 @@
   // Friends is the default: each launch opens on it. A switch to Following lasts until the app
   // is closed (sessionStorage), including pull to refresh and reloads.
   var MODE_KEY = 'following.mode';
+  // The feed Home opens on is a setting ("Default feed"). Switching feeds sticks until the app is
+  // closed; a new default takes over as soon as it's changed.
+  var DEFAULT_FEED = (window.__FL && window.__FL.defaultFeed === 'following') ? 'following' : 'friends';
+  // The All feed (a setting, off unless switched on).
+  var ALL_FEED = !!(window.__FL && window.__FL.allFeed === true);
+  try {
+    if (sessionStorage.getItem('following.modeDefault') !== DEFAULT_FEED) {
+      sessionStorage.setItem(MODE_KEY, DEFAULT_FEED);
+      sessionStorage.setItem('following.modeDefault', DEFAULT_FEED);
+    }
+  } catch (e) {}
   function feedMode() {
-    try { return sessionStorage.getItem(MODE_KEY) === 'following' ? 'following' : 'friends'; } catch (e) { return 'friends'; }
+    try {
+      var m = sessionStorage.getItem(MODE_KEY);
+      return m === 'following' || m === 'friends' || (m === 'all' && ALL_FEED) ? m : DEFAULT_FEED;
+    } catch (e) { return DEFAULT_FEED; }
   }
   function setFeedMode(m) {
     var changed = m !== feedMode();
@@ -459,7 +487,7 @@
       var r = svg.getBoundingClientRect();
       return r.height > 0 && r.top < window.innerHeight && r.bottom > 0;
     });
-    if (!caughtUp) post({ type: 'haptic', value: 'tap' });
+    if (!caughtUp) post({ type: 'haptic', value: 'tap' });   // the app checks the haptics setting
   }
 
   function addModeStyle() {
@@ -497,6 +525,19 @@
       '#fl-ff .pip{all:unset;position:absolute;top:10px;left:10px;width:34px;height:34px;border-radius:17px;background:rgba(18,18,18,.6);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}',
       '#fl-ff .pip svg{width:20px;height:20px}',
       '#fl-ff .dots{display:flex;justify-content:center;gap:4px;padding-top:8px}',
+      '#fl-ff .a .cc{font-weight:600;font-size:14px}',
+      '#fl-ff .a .more-b svg{stroke-linecap:round}',
+      '#fl-menu{position:fixed;inset:0;z-index:2147483600;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,0);transition:background .2s}',
+      '#fl-menu.on{background:rgba(0,0,0,.4)}',
+      '#fl-menu .sheet{background:var(--fl-sheet,#fff);border-radius:16px 16px 0 0;padding:8px 0 calc(24px + env(safe-area-inset-bottom));transform:translateY(100%);transition:transform .25s ease;font:400 16px/1.3 -apple-system,system-ui,sans-serif;color:var(--fl-strong)}',
+      '#fl-menu.on .sheet{transform:none}',
+      '#fl-menu .grab{width:36px;height:5px;border-radius:3px;background:#c7c7c7;margin:0 auto 10px}',
+      '#fl-menu .who{text-align:center;font-weight:600;font-size:14px;color:var(--fl-muted);padding:2px 16px 10px}',
+      '#fl-menu button{all:unset;display:block;width:100%;box-sizing:border-box;padding:15px 20px;cursor:pointer;-webkit-tap-highlight-color:transparent}',
+      '#fl-menu button:active{background:rgba(127,127,127,.15)}',
+      '#fl-menu button.red{color:#ed4956;font-weight:600}',
+      '#fl-menu .msg{padding:15px 20px;color:var(--fl-muted);font-size:14px}',
+      '@media (prefers-color-scheme: dark){#fl-menu .sheet{--fl-sheet:#262626}}',
       '#fl-ff .n{position:absolute;top:12px;right:12px;padding:3px 9px;border-radius:12px;background:rgba(18,18,18,.7);color:#fff;font:600 12px/18px -apple-system,system-ui,sans-serif;pointer-events:none;transition:opacity .3s}',
       '#fl-ff .n.off{opacity:0}',
       '#fl-ff .pop{position:absolute;left:50%;top:50%;width:96px;height:96px;margin:-48px 0 0 -48px;color:#fff;pointer-events:none;filter:drop-shadow(0 2px 8px rgba(0,0,0,.35));animation:flpop .9s ease-out forwards}',
@@ -520,10 +561,11 @@
       '#fl-ff .cu{padding:28px 24px;text-align:center;border-bottom:.5px solid #efefef}',
       '#fl-ff .cu-t{font:700 20px/1.25 -apple-system,system-ui,sans-serif;margin-bottom:6px;color:#1f9d55}',
       '#fl-ff .cu-ic{display:block;width:56px;height:56px;margin:0 auto 10px}',
-      '#fl-ff .cu-st{margin-top:14px;font-size:16px;font-weight:600;color:#000}',
+      '#fl-ff .cu-st{margin-top:14px;font-size:16px;font-weight:600;color:var(--fl-strong)}',
       '#fl-ff .cu-st:empty{display:none}',
       '#fl-ff .cu-s button{all:unset;cursor:pointer;display:block;margin:10px auto 0;color:#0095f6;font-weight:600}',
       '#fl-ff .cu-s{color:#737373;font-size:14px;line-height:1.4}',
+      '#fl-ff .cu-s b,#fl-ff .end b{font-weight:700}',
       '#fl-ff .end{padding:28px 24px 40px;text-align:center;color:#737373;font-size:15px;line-height:1.4}',
       '#fl-ff .end button{all:unset;cursor:pointer;color:#0095f6;font-weight:600}',
       '@media (prefers-color-scheme: dark){#fl-ff{background:#000;color:#f5f5f5}#fl-ff .p{border-color:#262626}#fl-ff .dots i{background:#363636}}'
@@ -542,7 +584,7 @@
       if (bar) bar.remove();
       bar = document.createElement('div');
       bar.id = 'fl-modes';
-      [['friends', 'Friends'], ['following', 'Following']].forEach(function (pair) {
+      [['friends', 'Friends'], ['following', 'Following']].concat(ALL_FEED ? [['all', 'All']] : []).forEach(function (pair) {
         var b = document.createElement('button');
         b.type = 'button';
         b.dataset.mode = pair[0];
@@ -581,6 +623,8 @@
   var HEART = 'M16.8 3.5c-2 0-3.6 1.1-4.8 2.8-1.2-1.7-2.8-2.8-4.8-2.8C4.3 3.5 2 5.9 2 8.9c0 5.6 8.6 11 10 11.6 1.4-.6 10-6 10-11.6 0-3-2.3-5.4-5.2-5.4z';
   var BUBBLE = 'M20.7 16.4A9.5 9.5 0 1 0 17 20.1L21.5 21.5z';
   var PLANE = 'M21.5 2.5 2.5 9.8l7.3 3.2 3.2 7.5zM9.8 13 21.5 2.5';
+  // Three lines, like the app's icon (two long, one short), for the post menu.
+  var LINES = 'M4.5 7h15M4.5 12h15M4.5 17h9.5';
   var BOOKMARK = 'M19 21 12 16 5 21V3.5h14z';
 
   function el(tag, cls, text) {
@@ -820,13 +864,37 @@
   // A bio to show next to the name, in both Home feeds: for private accounts, and public ones
   // with under 4,000 followers (not big public pages). No links, emails or line breaks; none if
   // it's only emoji.
-  var BIO_MAX_FOLLOWERS = 4000;
+  // The limit is a setting.
+  var BIO_MAX_FOLLOWERS = (window.__FL && typeof window.__FL.bioLimit === 'number') ? window.__FL.bioLimit : 4000;
+  // Bios you've hidden from the post menu ("Hide bio for this user"), by account id, on the phone.
+  var HIDDEN_BIOS_KEY = 'following.hiddenBios';
+  var hiddenBios = {};
+  try { hiddenBios = JSON.parse(localStorage.getItem(HIDDEN_BIOS_KEY) || '{}') || {}; } catch (e) { hiddenBios = {}; }
+  function setBioHidden(u, hide) {
+    var id = userId(u);
+    if (!id) return;
+    if (hide) hiddenBios[id] = 1; else delete hiddenBios[id];
+    try { localStorage.setItem(HIDDEN_BIOS_KEY, JSON.stringify(hiddenBios)); } catch (e) {}
+    // Every card from this account, right away.
+    [].forEach.call(document.querySelectorAll('#fl-ff article'), function (a) {
+      if (a.__flUser && userId(a.__flUser) === id) {
+        var line = a.querySelector('.nl');
+        var old = line && line.querySelector('.bio');
+        if (old) old.remove();
+        var b = !hide && bioLine(a.__flUser);
+        if (line && b) line.appendChild(el('span', 'bio', b));
+      }
+    });
+  }
   function bioLine(u) {
+    if (!S('bios')) return '';
+    if (hiddenBios[userId(u)]) return '';
     var p = profileOf(u);
     if (!p || !p.b) return '';
     var priv = typeof u.is_private === 'boolean' ? u.is_private :
       (window.__flPrivacy || {})[(u.username || '').toLowerCase()] === true;
-    if (!priv && !(p.f < BIO_MAX_FOLLOWERS)) return '';
+    // Public accounts: only under the follower limit, and only if that's switched on.
+    if (!priv && (!S('bioPublic') || !(p.f < BIO_MAX_FOLLOWERS))) return '';
     var b = p.b
       .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
       .replace(/\S+@\S+\.\S+/g, '')
@@ -884,7 +952,7 @@
       wantProfile(user);
     }
     who.appendChild(line);
-    var loc = m.location;
+    var loc = S('locations') ? m.location : null;
     if (loc && loc.name) {
       var la = el('a', 'loc', loc.name);
       var lpath = loc.pk ? '/explore/locations/' + loc.pk + '/' : '';
@@ -939,7 +1007,7 @@
     cm.setAttribute('aria-label', 'Comments');
     cm.appendChild(icon(BUBBLE, false));
     // The number of comments next to the bubble, as in Instagram's app.
-    if (m.comment_count > 0 && !m.comments_disabled) cm.appendChild(el('span', 'n', count(m.comment_count)));
+    if (S('commentCounts') && m.comment_count > 0 && !m.comments_disabled) cm.appendChild(el('span', 'cc', count(m.comment_count)));
     // Straight to the comments (Instagram's /comments/ page), not the post.
     cm.addEventListener('click', function (e) { e.preventDefault(); openOver('/p/' + m.code + '/comments/'); });
     // Share: Instagram's own "Send to" dialog. It opens the post full screen and taps
@@ -977,6 +1045,16 @@
     a.appendChild(like);
     a.appendChild(cm);
     a.appendChild(sh);
+    // Public accounts: a "..." menu (hide their bio, mute their posts, unfollow).
+    p.__flUser = user;
+    if (!isPrivate(m)) {
+      var more = el('button', 'more-b');
+      more.type = 'button';
+      more.setAttribute('aria-label', 'More options');
+      more.appendChild(icon(LINES, false));
+      more.addEventListener('click', function (e) { e.preventDefault(); openPostMenu(m, p); });
+      a.appendChild(more);
+    }
     a.appendChild(sv);
     p.appendChild(a);
 
@@ -1052,7 +1130,7 @@
       p.appendChild(vc);
     }
     // 3 days old or more ("3 days ago", or a date): bold red, so older posts stand out.
-    if (m.taken_at) p.appendChild(el('span', 'ago' + (Math.round((Date.now() / 1000 - m.taken_at) / 86400) >= 3 ? ' old' : ''), ago(m.taken_at)));
+    if (m.taken_at) p.appendChild(el('span', 'ago' + (S('oldDates') && Math.round((Date.now() / 1000 - m.taken_at) / 86400) >= OLD_DAYS ? ' old' : ''), ago(m.taken_at)));
     return p;
   }
 
@@ -1060,7 +1138,17 @@
   //   Friends:   newest first (Instagram's Following feed), keeping only private accounts.
   //   Following: Instagram's suggested order (its ranked feed, as in the app's main feed), keeping
   //              only accounts you follow (no "Suggested for you" posts, no ads).
+  // Ads stay out of every feed.
+  function isAd(m) { return !!(m.ad_id || m.ad_action || m.ad_header_style || m.ad_metadata || m.is_ad); }
+
   var FEEDS = {
+    // Instagram's regular feed, suggested posts included (no ads).
+    all: {
+      source: 'home',
+      keep: function (m) { return !isAd(m); },
+      looking: 'Loading your feed…',
+      none: 'No recent posts.'
+    },
     following: {
       source: 'home',
       keep: function (m) { var fs = (m.user || {}).friendship_status; return !!(fs && fs.following === true); },
@@ -1156,7 +1244,7 @@
         if (ff.shown[m.code]) continue;
         if (already && (!ff.showSeen || ff.collapsed)) { ff.held++; continue; }
         // Following's earlier posts: the ones you haven't liked (as in Friends).
-        if (already && ff.earlier && m.has_liked) continue;
+        if (already && ff.earlier && m.has_liked && S('hideLikedEarlier')) continue;
         ff.shown[m.code] = 1;
         if (!window.__flFirstCard) window.__flFirstCard = Math.round(performance.now());
         var c = card(m);
@@ -1194,6 +1282,94 @@
     return el('div', 'cu-st', window.__flStoryCount || '');
   }
 
+  // Instagram's own account actions (the same requests its site sends).
+  function igAction(path, fields) {
+    var body = new URLSearchParams(fields || {}).toString();
+    return (window.__flFetch || fetch)(path, {
+      method: 'POST', credentials: 'include',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-csrftoken': cookie('csrftoken'),
+        'x-ig-app-id': '936619743392459', 'x-requested-with': 'XMLHttpRequest', 'x-instagram-ajax': '1' },
+      body: body
+    }).then(function (r) { return r.text().then(function (t) {
+      var j = null; try { j = JSON.parse(t); } catch (e) {}
+      if (!r.ok || !j || j.status !== 'ok') throw new Error(t.slice(0, 160));
+      return j;
+    }); });
+  }
+  window.__flIgAction = igAction;   // debugging (and the app's Muted accounts list)
+  function igGet(path) {
+    return (window.__flFetch || fetch)(path, { credentials: 'include',
+      headers: { 'x-ig-app-id': '936619743392459', 'x-requested-with': 'XMLHttpRequest' } })
+      .then(function (r) { return r.json(); });
+  }
+  // Tell the app (its Muted accounts list in App settings).
+  function reportMuted(id, username, muted) { post({ type: 'muted', value: { id: id, username: username, muted: muted } }); }
+
+  // Posts from accounts you've just muted or unfollowed leave the feed at once.
+  function dropPostsFrom(u) {
+    var id = userId(u);
+    [].forEach.call(document.querySelectorAll('#fl-ff article'), function (a) {
+      if (a.__flUser && userId(a.__flUser) === id) a.remove();
+    });
+  }
+
+  // The "..." menu on a public account's post: an Instagram-style sheet from the bottom.
+  function openPostMenu(m, cardEl) {
+    var u = m.user || {}, id = userId(u), name = u.username || '';
+    var old = document.getElementById('fl-menu');
+    if (old) old.remove();
+    var wrap = el('div');
+    wrap.id = 'fl-menu';
+    var sheet = el('div', 'sheet');
+    sheet.appendChild(el('div', 'grab'));
+    sheet.appendChild(el('div', 'who', '@' + name));
+    var close = function () {
+      wrap.classList.remove('on');
+      setTimeout(function () { wrap.remove(); }, 250);
+    };
+    var row = function (label, cls, fn) {
+      var b = el('button', cls || '', label);
+      b.type = 'button';
+      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); fn(b); });
+      sheet.appendChild(b);
+      return b;
+    };
+    var say = function (text) {
+      sheet.textContent = '';
+      sheet.appendChild(el('div', 'grab'));
+      sheet.appendChild(el('div', 'msg', text));
+      setTimeout(close, 1400);
+    };
+    var hidden = !!hiddenBios[id];
+    row(hidden ? 'Show bio for this user' : 'Hide bio for this user', '', function () {
+      setBioHidden(u, !hidden);
+      close();
+    });
+    row('Mute posts', '', function (b) {
+      b.textContent = 'Muting…';
+      igAction('/api/v1/friendships/mute_posts_or_story_from_follow/', { target_posts_author_id: id }).then(function () {
+        dropPostsFrom(u);
+        reportMuted(id, name, true);
+        say("Muted @" + name + "'s posts. Unmute in App settings or their profile's menu.");
+      }, function () { say("Couldn't mute. Try again from their profile."); });
+    });
+    row('Unfollow', 'red', function (b) {
+      // Asks once more before unfollowing.
+      if (!b.__sure) { b.__sure = true; b.textContent = 'Tap again to unfollow @' + name; return; }
+      b.textContent = 'Unfollowing…';
+      igAction('/api/v1/friendships/destroy/' + id + '/', { user_id: id }).then(function () {
+        dropPostsFrom(u);
+        say('Unfollowed @' + name + '.');
+      }, function () { say("Couldn't unfollow. Try again from their profile."); });
+    });
+    row('Cancel', '', close);
+    wrap.appendChild(sheet);
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    document.body.appendChild(wrap);
+    void wrap.offsetWidth;
+    wrap.classList.add('on');
+  }
+
   // The green check over "You're all caught up". Every time it comes into view (scrolling to it,
   // switching between Friends and Following, a refresh, coming back to Home) it is drawn in like
   // a payment going through: the ring draws around, then the tick, left to the bottom point to
@@ -1220,6 +1396,12 @@
   function drawCheck(svg) {
     var rg = svg.querySelector('.rg'), ck = svg.querySelector('.ck');
     if (!rg || !ck) return;
+    if (!S('checkAnimation')) {
+      // Shown whole at once (the success tap still lands, if that's on).
+      [rg, ck].forEach(function (el) { el.style.transition = 'none'; el.style.strokeDashoffset = '0'; });
+      if (S('hapticCheck')) post({ type: 'haptic', value: 'success' });
+      return;
+    }
     strokeIn(rg, RING_MS, MARK_DELAY, 'cubic-bezier(.45,0,.25,1)');
     strokeIn(ck, TICK_MS, MARK_DELAY + RING_MS - 40, 'cubic-bezier(.4,0,.2,1)');
     clearTimeout(svg.__t);
@@ -1259,7 +1441,7 @@
     ff.unliked = true;
     ff.caughtUp = false;
     ff.emptyRun = 0;
-    caughtUpDivider(list, 'from your friends');
+    caughtUpDivider(list, 'friends');
   }
 
   // Following, after "You're all caught up": the seen posts from the Following feed itself
@@ -1271,24 +1453,51 @@
     ff.seenRun = 0;
     ff.emptyRun = 0;
     ff.counted = {};
-    caughtUpDivider(list, '');
+    caughtUpDivider(list, ff.mode);
   }
 
-  function caughtUpDivider(list, from) {
+  // "You've seen all new posts from private accounts." (Friends) or "...from accounts you
+  // follow." (Following), with the key word in bold.
+  function seenLine(kind) {
+    var span = document.createElement('span');
+    var b = document.createElement('b');
+    if (kind === 'friends') {
+      span.appendChild(document.createTextNode("You've seen all new posts from "));
+      b.textContent = 'private';
+      span.appendChild(b);
+      span.appendChild(document.createTextNode(' accounts.'));
+    } else if (kind === 'all') {
+      span.appendChild(document.createTextNode("You've seen all new posts in "));
+      b.textContent = 'All';
+      span.appendChild(b);
+      span.appendChild(document.createTextNode('.'));
+    } else {
+      span.appendChild(document.createTextNode("You've seen all new posts from accounts you "));
+      b.textContent = 'follow';
+      span.appendChild(b);
+      span.appendChild(document.createTextNode('.'));
+    }
+    return span;
+  }
+
+  function caughtUpDivider(list, kind) {
+    var from = kind === 'friends' ? 'from your friends' : '';
     // At the top (nothing new above it, as after a refresh or reopening the app): keep the
     // earlier posts folded away until "View earlier posts".
-    ff.collapsed = ff.cards === 0;
+    ff.collapsed = ff.cards === 0 && S('foldEarlier');
     var d = el('div', 'cu');
     d.appendChild(cuMark());
     d.appendChild(el('div', 'cu-t', "You're all caught up"));
-    var seenText = "You've seen the new posts" + (from ? ' ' + from : '') + '.';
-    var sub = el('div', 'cu-s', ff.collapsed ? seenText : seenText + " Here are earlier ones you haven't liked yet.");
+    var notLiked = S('hideLikedEarlier') ? " you haven't liked yet" : '';
+    var sub = el('div', 'cu-s');
+    sub.appendChild(seenLine(kind));
+    if (!ff.collapsed) sub.appendChild(document.createTextNode(' Here are earlier ones' + notLiked + '.'));
     if (ff.collapsed) {
       var open = el('button', '', 'View earlier posts');
       open.type = 'button';
       open.addEventListener('click', function () {
         ff.collapsed = false;
-        sub.textContent = "Here are earlier posts" + (from ? ' ' + from : '') + " you haven't liked yet.";
+        sub.textContent = 'Here are earlier posts' + (from ? ' ' + from : '') + notLiked + '.';
         queue();
       });
       sub.appendChild(open);
@@ -1305,7 +1514,7 @@
       var pg = pages[key];
       for (var i = 0; i < pg.items.length; i++) {
         var m = pg.items[i];
-        if (ff.shown[m.code] || m.has_liked || !(seen[m.code] || m.is_seen === true)) continue;
+        if (ff.shown[m.code] || (m.has_liked && S('hideLikedEarlier')) || !(seen[m.code] || m.is_seen === true)) continue;
         if (!isFriend(m)) continue;
         ff.shown[m.code] = 1;
         list.appendChild(card(m));
@@ -1420,7 +1629,8 @@
       var t = el('div', '', "You're all caught up");
       t.className = 'cu-t';
       end.appendChild(t);
-      end.appendChild(document.createTextNode("You've seen the new posts. "));
+      end.appendChild(seenLine(ff.mode));
+      end.appendChild(document.createTextNode(' '));
       var more = el('button', '', 'Show posts you\'ve seen');
       more.type = 'button';
       more.addEventListener('click', function () {
@@ -1539,7 +1749,7 @@
     if (added) ff.emptyRun = 0;
     // Friends: once caught up (or at the end of the feed), carry on with seen, unliked posts.
     if (mode === 'friends' && !ff.unliked && ff.started && (ff.caughtUp || !ff.more)) startUnliked(list);
-    if (mode === 'following' && !ff.earlier && ff.started && (ff.caughtUp || !ff.more) && ff.held > 0) {
+    if ((mode === 'following' || mode === 'all') && !ff.earlier && ff.started && (ff.caughtUp || !ff.more) && ff.held > 0) {
       startEarlier(list);
       drawPages(list);
     }
@@ -1647,21 +1857,6 @@
     a.click();
   }, true);
 
-  // Ads between people's stories: skip them (tap "Next" as soon as one shows).
-  var lastAdSkip = 0;
-  function storyAdStep() {
-    if (!/^\/stories\//.test(location.pathname) || Date.now() - lastAdSkip < 800) return;
-    var header = document.querySelector('section') || document.body;
-    var texts = leafTexts(header, 80);
-    var ad = texts.some(function (p) { return p[0] === 'Sponsored' && p[1].getBoundingClientRect().top < window.innerHeight / 3; });
-    if (!ad) return;
-    var next = document.querySelector('svg[aria-label="Next"]');
-    var btn = next && (next.closest('[role="button"],button') || next.parentElement);
-    if (!btn) return;
-    lastAdSkip = Date.now();
-    btn.click();
-  }
-
   // Unread chats: the number on Instagram's own Messages button (its tab bar is hidden, but
   // still there), which counts chats with something unread, not messages. Sent to the app for
   // the red badge on the Messages tab.
@@ -1684,6 +1879,7 @@
   var PIC_SIZE = 86;
   function ownProfileLookStep() {
     if (TAB !== 'profile') return;
+    settingsIconStep();
     var main = document.querySelector('main');
     if (!main) return;
     var own = !!document.querySelector('main a[href="/accounts/edit/"]') ||
@@ -1798,6 +1994,140 @@
     btn.click();
   }
 
+  // Your profile (Profile tab): a Following icon in the top right (where Threads was) that opens
+  // the app's settings.
+  function settingsIconStep() {
+    var own = !!document.querySelector('main a[href="/accounts/edit/"]') ||
+      [].some.call(document.querySelectorAll('main [role="button"], main a, main button'), function (b) {
+        return (b.textContent || '').trim() === 'Edit profile';
+      });
+    var btn = document.getElementById('fl-settings');
+    if (!own) { if (btn) btn.remove(); return; }
+    if (btn) return;
+    // Level with the settings gear in the top left.
+    var gear = document.querySelector('svg[aria-label="Options"], svg[aria-label="Settings"]');
+    var top = gear ? gear.getBoundingClientRect() : null;
+    btn = document.createElement('button');
+    btn.id = 'fl-settings';
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Following settings');
+    btn.style.cssText = 'all:unset;position:absolute;right:16px;width:28px;height:28px;z-index:2147483000;cursor:pointer;-webkit-tap-highlight-color:transparent;top:' +
+      (top && top.height ? Math.round(top.top + top.height / 2 - 14 + window.scrollY) : 10) + 'px';
+    btn.innerHTML = '<svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><defs><linearGradient id="flg" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#6A36C2"/><stop offset=".3" stop-color="#B22FA8"/><stop offset=".55" stop-color="#E1306C"/><stop offset=".8" stop-color="#F77737"/><stop offset="1" stop-color="#FCB045"/></linearGradient></defs>' +
+      '<rect width="28" height="28" rx="7" fill="url(#flg)"/><g fill="#fff"><rect x="6.4" y="9.2" width="13.7" height="1.9" rx=".95"/><rect x="6.4" y="13.1" width="13.7" height="1.9" rx=".95"/><rect x="6.4" y="17" width="8.8" height="1.9" rx=".95"/></g></svg>';
+    document.body.appendChild(btn);
+  }
+
+  // The Messages list: no back arrow (it led somewhere odd).
+  function inboxBackStep() {
+    if (TAB !== 'messages' || !/^\/direct\/inbox\/?$/.test(location.pathname)) return;
+    var back = document.querySelector('svg[aria-label="Back"]');
+    var b = back && (back.closest('a,[role="button"],button') || back.parentElement);
+    if (b && b.style.visibility !== 'hidden') b.style.setProperty('visibility', 'hidden', 'important');
+  }
+
+  // The app's own floating buttons (settings icon, 2× speed): Instagram's page swallows their
+  // taps, so a tap is caught on the whole document first (as for the heart).
+  var ownTapStart = null;
+  document.addEventListener('touchstart', function (e) {
+    var t = e.touches && e.touches[0];
+    ownTapStart = t ? { x: t.clientX, y: t.clientY } : null;
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function (e) {
+    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-speed, .fl-mute-row');
+    var t = e.changedTouches && e.changedTouches[0];
+    if (!b || !ownTapStart || !t || Math.abs(t.clientX - ownTapStart.x) > 10 || Math.abs(t.clientY - ownTapStart.y) > 10) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (b.id === 'fl-settings') post({ type: 'showSettings' });
+    else if (b.classList.contains('fl-mute-row')) b.__flTap();
+    else if (b.__flTap) b.__flTap(e);
+  }, true);
+
+  // 2× speed: a small button over a big playing video (a reel a friend sent, a post's video).
+  // Tap to switch between 1× and 2×; the choice holds for the rest of this page's videos.
+  var playRate = 1;
+  document.addEventListener('playing', function (e) {
+    var v = e.target;
+    if (v && v.tagName === 'VIDEO' && v.playbackRate !== playRate) v.playbackRate = playRate;
+  }, true);
+  function speedButtonStep() {
+    var btn = document.getElementById('fl-speed');
+    // Not on stories (the story row, or a story open), only reels and videos.
+    if (/^\/stories\//.test(location.pathname) || TAB === 'stories' && location.pathname === '/') {
+      if (btn) btn.style.display = 'none';
+      return;
+    }
+    var big = [].some.call(document.querySelectorAll('video'), function (v) {
+      var r = v.getBoundingClientRect();
+      return r.height > 240 && r.bottom > 80 && r.top < window.innerHeight - 80 && !v.closest('#fl-ff');
+    });
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'fl-speed';
+      btn.type = 'button';
+      btn.style.cssText = 'all:unset;position:fixed;right:14px;top:140px;z-index:2147483000;min-width:44px;height:32px;padding:0 12px;box-sizing:border-box;' +
+        'border-radius:16px;background:rgba(0,0,0,.6);color:#fff;font:700 15px/32px -apple-system,system-ui,sans-serif;text-align:center;-webkit-tap-highlight-color:transparent';
+      var flip = function (e) {
+        e.preventDefault(); e.stopPropagation();
+        playRate = playRate === 1 ? 2 : 1;
+        [].forEach.call(document.querySelectorAll('video'), function (v) { v.playbackRate = playRate; });
+        btn.textContent = playRate === 2 ? '2×' : '1×';
+        btn.style.background = playRate === 2 ? 'rgba(225,48,108,.9)' : 'rgba(0,0,0,.6)';
+      };
+      btn.__flTap = flip;
+      btn.textContent = '1×';
+      document.body.appendChild(btn);
+    }
+    btn.style.display = big ? 'block' : 'none';
+  }
+
+  // Someone's profile, their "..." menu: Instagram's "Embed" row becomes "Mute account" /
+  // "Unmute account" (their posts and stories), checked with Instagram when the menu opens.
+  var RESERVED = /^(explore|direct|accounts|p|reel|reels|stories|about|legal|developer|web|challenge|emails|session|notifications)$/;
+  function profileMenuStep() {
+    var mm = /^\/([A-Za-z0-9._]+)\/?$/.exec(location.pathname);
+    if (!mm || RESERVED.test(mm[1])) return;
+    var dialog = document.querySelector('[role="dialog"]');
+    if (!dialog || dialog.querySelector('.fl-mute-row')) return;
+    var embed = [].filter.call(dialog.querySelectorAll('button, [role="button"]'), function (b) {
+      return (b.textContent || '').trim() === 'Embed';
+    })[0];
+    if (!embed) return;
+    var username = mm[1].toLowerCase();
+    var id = (window.__flUserIds || {})[username];
+    if (!id) return;
+    // A copy without Instagram's own Embed action.
+    var row = embed.cloneNode(true);
+    row.classList.add('fl-mute-row');
+    embed.parentNode.replaceChild(row, embed);
+    var leaf = [].filter.call(row.querySelectorAll('*'), function (e) { return e.childElementCount === 0 && e.textContent.trim() === 'Embed'; })[0] || row;
+    var muted = null;
+    leaf.textContent = 'Mute account';
+    igGet('/api/v1/friendships/show/' + id + '/').then(function (j) {
+      muted = !!(j && (j.muting || j.is_muting_reel));
+      leaf.textContent = muted ? 'Unmute account' : 'Mute account';
+    }, function () { muted = false; });
+    row.__flTap = function () {
+      if (row.__busy) return;
+      row.__busy = true;
+      var on = !muted;
+      leaf.textContent = on ? 'Muting…' : 'Unmuting…';
+      igAction('/api/v1/friendships/' + (on ? 'mute' : 'unmute') + '_posts_or_story_from_follow/',
+        { target_posts_author_id: id, target_reel_author_id: id }).then(function () {
+        muted = on;
+        reportMuted(id, mm[1], on);
+        leaf.textContent = on ? 'Muted' : 'Unmuted';
+        setTimeout(function () {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+        }, 700);
+      }, function () { leaf.textContent = "Couldn't do that, try again"; })
+        .then(function () { row.__busy = false; });
+    };
+    row.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); row.__flTap(); }, true);
+  }
+
   /* ---------- run ---------- */
   var queued = false;
   function tick() {
@@ -1818,10 +2148,12 @@
     saveStep();
     shareAppsStep();
     noRepostStep();
-    storyAdStep();
     if (TAB === 'home' || TAB === 'messages') dmBadgeStep();
     ownProfileLookStep();
     feedbackDmStep();
+    inboxBackStep();
+    profileMenuStep();
+    speedButtonStep();
     // The app's feed is in place (or this isn't the Home feed): show the page.
     if (!feedCoverNeeded()) document.documentElement.classList.remove('fl-early');
   }
