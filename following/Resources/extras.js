@@ -265,6 +265,8 @@
     stripBox = null;
     var c = document.getElementById('fl-story-count');
     if (c) c.remove();
+    var v = document.getElementById('fl-version');
+    if (v) v.remove();
   }
 
   function hideForStrip(el) {
@@ -328,6 +330,13 @@
     reportStripHeight(box);
   }
 
+  // The app: is the orange banner showing? It has its own (i), so the one here hides.
+  window.__flSetBanner = function (on) {
+    window.__flBanner = !!on;
+    var i = document.querySelector('#fl-version [role="button"]');
+    if (i) i.style.display = on ? 'none' : 'inline-flex';
+  };
+
   // Above the row: how many of the people with stories up you've watched ("Stories: 12/120
   // seen"). Counted per person: watching any one of their current stories counts. From
   // Instagram's list for the row ("seen" is when the last story you watched was posted, so
@@ -364,6 +373,24 @@
       c.style.cssText = 'position:absolute;top:4px;left:14px;z-index:5;font:600 12px/16px -apple-system,system-ui,sans-serif;color:#737373;pointer-events:none';
       document.body.appendChild(c);
     }
+    // And on the right of the same line: which version of the app this is.
+    var v = document.getElementById('fl-version');
+    if (!v && window.__FOLLOWING_VERSION) {
+      v = document.createElement('div');
+      v.id = 'fl-version';
+      v.style.cssText = 'position:absolute;top:1px;right:14px;z-index:5;display:flex;align-items:center;gap:6px;font:700 17px/21px -apple-system,system-ui,sans-serif;color:#000;pointer-events:none';
+      v.appendChild(document.createTextNode('Following v' + window.__FOLLOWING_VERSION));
+      // (i): the app's "How to refresh" page.
+      var info = document.createElement('span');
+      info.textContent = 'i';
+      info.setAttribute('role', 'button');
+      info.setAttribute('aria-label', 'How to refresh');
+      info.style.cssText = 'pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1.8px solid #000;border-radius:50%;box-sizing:border-box;font:700 12px/1 Georgia,serif;cursor:pointer';
+      info.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); post({ type: 'showGuide' }); });
+      if (window.__flBanner) info.style.display = 'none';
+      v.appendChild(info);
+      document.body.appendChild(v);
+    }
     var text = 'Stories: ' + seenN + '/' + total + ' seen';
     if (c.textContent !== text) {
       c.textContent = text;
@@ -371,7 +398,7 @@
       post({ type: 'storyCount', value: text });
     }
     // Room for the count above the circles.
-    box.style.setProperty('padding-top', '18px', 'important');
+    box.style.setProperty('padding-top', '24px', 'important');
   }
 
   // Pull to refresh from the story row: this small browser keeps the drag, so it tells the app
@@ -482,7 +509,7 @@
       '#fl-ff .ago{display:block;padding:4px 12px 0;font-size:12px}',
       '#fl-ff .ago.old{color:#ed4956;font-weight:700}',
       '#fl-ff .cu{padding:28px 24px;text-align:center;border-bottom:.5px solid #efefef}',
-      '#fl-ff .cu-t{font-weight:600;font-size:16px;margin-bottom:4px;color:#1f9d55}',
+      '#fl-ff .cu-t{font:700 20px/1.25 -apple-system,system-ui,sans-serif;margin-bottom:6px;color:#1f9d55}',
       '#fl-ff .cu-ic{display:block;width:56px;height:56px;margin:0 auto 10px}',
       '#fl-ff .cu-st{margin-top:14px;font-size:16px;font-weight:600;color:#000}',
       '#fl-ff .cu-st:empty{display:none}',
@@ -902,7 +929,10 @@
     cm.href = '/p/' + m.code + '/';
     cm.setAttribute('aria-label', 'Comments');
     cm.appendChild(icon(BUBBLE, false));
-    cm.addEventListener('click', function (e) { e.preventDefault(); openOver('/p/' + m.code + '/'); });
+    // The number of comments next to the bubble, as in Instagram's app.
+    if (m.comment_count > 0 && !m.comments_disabled) cm.appendChild(el('span', 'n', count(m.comment_count)));
+    // Straight to the comments (Instagram's /comments/ page), not the post.
+    cm.addEventListener('click', function (e) { e.preventDefault(); openOver('/p/' + m.code + '/comments/'); });
     // Share: Instagram's own "Send to" dialog. It opens the post full screen and taps
     // Instagram's Share button there (shareStep). Instagram's site has no Share on private
     // accounts' posts, so those get the iPhone's share sheet with the link instead.
@@ -1009,7 +1039,7 @@
     if (m.comment_count > 0 && !m.comments_disabled) {
       var vc = el('a', 'vc', m.comment_count === 1 ? 'View 1 comment' : 'View all ' + count(m.comment_count) + ' comments');
       vc.href = '/p/' + m.code + '/';
-      vc.addEventListener('click', function (e) { e.preventDefault(); openOver('/p/' + m.code + '/'); });
+      vc.addEventListener('click', function (e) { e.preventDefault(); openOver('/p/' + m.code + '/comments/'); });
       p.appendChild(vc);
     }
     // 3 days old or more ("3 days ago", or a date): bold red, so older posts stand out.
@@ -1155,13 +1185,63 @@
     return el('div', 'cu-st', window.__flStoryCount || '');
   }
 
-  // The green check over "You're all caught up" (a ring with a tick, like Instagram's).
+  // The green check over "You're all caught up". Every time it comes into view (scrolling to it,
+  // switching between Friends and Following, a refresh, coming back to Home) it is drawn in like
+  // a payment going through: the ring draws around, then the tick, left to the bottom point to
+  // the right, and a "success" tap you can feel lands as the tick finishes.
+  var RING_MS = 380, TICK_MS = 300, MARK_DELAY = 80;
   function cuMark() {
     var d = document.createElement('div');
-    d.innerHTML = '<svg class="cu-ic" viewBox="0 0 96 96" aria-hidden="true"><circle cx="48" cy="48" r="45" fill="none" stroke="#1f9d55" stroke-width="3"/>' +
-      '<path d="M30 49.5l12 12 24-26" fill="none" stroke="#1f9d55" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    return d.firstChild;
+    d.innerHTML = '<svg class="cu-ic" viewBox="0 0 96 96" aria-hidden="true">' +
+      '<circle class="rg" cx="48" cy="48" r="44" fill="none" stroke="#1f9d55" stroke-width="5" stroke-linecap="round" transform="rotate(-90 48 48)" style="stroke-dasharray:277;stroke-dashoffset:277"/>' +
+      '<path class="ck" d="M29 50l12.5 12.5L67 35" fill="none" stroke="#1f9d55" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="stroke-dasharray:60;stroke-dashoffset:60"/></svg>';
+    var svg = d.firstChild;
+    if (checkObserver) checkObserver.observe(svg); else drawCheck(svg);
+    return svg;
   }
+  function strokeIn(el, ms, delay, ease) {
+    var len = el.getTotalLength ? el.getTotalLength() : 100;
+    el.style.transition = 'none';
+    el.style.strokeDasharray = len;
+    el.style.strokeDashoffset = len;
+    void el.getBoundingClientRect();
+    el.style.transition = 'stroke-dashoffset ' + ms + 'ms ' + ease + ' ' + delay + 'ms';
+    el.style.strokeDashoffset = '0';
+  }
+  function drawCheck(svg) {
+    var rg = svg.querySelector('.rg'), ck = svg.querySelector('.ck');
+    if (!rg || !ck) return;
+    strokeIn(rg, RING_MS, MARK_DELAY, 'cubic-bezier(.45,0,.25,1)');
+    strokeIn(ck, TICK_MS, MARK_DELAY + RING_MS - 40, 'cubic-bezier(.4,0,.2,1)');
+    clearTimeout(svg.__t);
+    svg.__t = setTimeout(function () { post({ type: 'haptic', value: 'success' }); }, MARK_DELAY + RING_MS - 40 + TICK_MS - 30);
+  }
+  function hideCheck(svg) {
+    clearTimeout(svg.__t);
+    [].forEach.call(svg.querySelectorAll('.rg,.ck'), function (el) {
+      el.style.transition = 'none';
+      el.style.strokeDashoffset = el.style.strokeDasharray || '300';
+    });
+  }
+  var checkObserver = ('IntersectionObserver' in window) ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      var svg = en.target;
+      if (en.isIntersecting && en.intersectionRatio >= 0.7) {
+        if (!svg.__shown) { svg.__shown = true; drawCheck(svg); }
+      } else if (!en.isIntersecting && svg.__shown) {
+        // Fully out of view: drawn again next time.
+        svg.__shown = false;
+        hideCheck(svg);
+      }
+    });
+  }, { threshold: [0, 0.7] }) : null;
+  // Back on the Home tab (the app calls this): draw any check that's on screen again.
+  window.__flReplayCheck = function () {
+    [].forEach.call(document.querySelectorAll('#fl-ff .cu-ic'), function (svg) {
+      var r = svg.getBoundingClientRect();
+      if (r.bottom > 0 && r.top < window.innerHeight && r.height > 0) { svg.__shown = true; hideCheck(svg); drawCheck(svg); }
+    });
+  };
 
   // Friends, after "You're all caught up": earlier posts from friends that you've seen
   // but not liked, in Instagram's suggested order (the ranked feed), under a divider.
@@ -1303,8 +1383,14 @@
   function setEnd(box) {
     var cfg = FEEDS[ff.mode];
     var end = box.querySelector('.end');
-    end.textContent = '';
     var hasTpl = !!(window.__flFeed && window.__flFeed.template);
+    // Only redraw when what it says changes (this runs every second; redrawing would restart the
+    // check's animation).
+    var key = [ff.mode, ff.unliked, ff.earlier, ff.collapsed, ff.error, ff.caughtUp, ff.more, hasTpl, ff.showSeen,
+      ff.held > 0, ff.cards > 0, ff.r.more, ff.r.started].join(',');
+    if (end.dataset.key === key) return;
+    end.dataset.key = key;
+    end.textContent = '';
     if ((ff.unliked || ff.earlier) && ff.collapsed) return;
     if (ff.earlier && !ff.error) {
       end.textContent = ff.more ? 'Loading more…' : "That's everything for now.";
@@ -1387,7 +1473,7 @@
       var box = document.getElementById(FF_ID);
       if (box) box.remove();          // redrawn from the new first page on the next step
       ff = freshState(mode);
-      document.scrollingElement.scrollTop = 0;
+      if (document.scrollingElement.scrollTop > 0) document.scrollingElement.scrollTop = 0;
       if (!window.__flRefreshedAt) window.__flRefreshedAt = Math.round(performance.now());
       queue();
       done();
@@ -1582,6 +1668,71 @@
     post({ type: 'dmBadge', value: n });
   }
 
+  // Your own profile (Profile tab): zoomed in like Instagram's app, where exactly five highlights
+  // fit across before the row scrolls. The zoom is worked out from the row itself (so it fits
+  // any iPhone width): the sixth highlight starts right at the screen's edge. The profile
+  // picture is then set to PIC_SIZE points across.
+  var PIC_SIZE = 86;
+  function ownProfileLookStep() {
+    if (TAB !== 'profile') return;
+    var main = document.querySelector('main');
+    if (!main) return;
+    var own = !!document.querySelector('main a[href="/accounts/edit/"]') ||
+      [].some.call(document.querySelectorAll('main [role="button"], main a, main button'), function (b) {
+        return (b.textContent || '').trim() === 'Edit profile';
+      });
+    if (!own) {
+      if (main.style.zoom) main.style.removeProperty('zoom');
+      return;
+    }
+    var zoom = parseFloat(main.style.zoom) || 1;
+    var links = main.querySelectorAll('a[href*="/stories/highlights/"]');
+    if (links.length >= 6) {
+      var sixth = links[5].closest('li') || links[5];
+      var left = sixth.getBoundingClientRect().left;
+      if (left > 0 && Math.abs(left - window.innerWidth) > 1) {
+        // Positions grow in step with the zoom, so one step lands it (a second pass tidies up).
+        zoom = Math.max(1, Math.min(1.4, zoom * window.innerWidth / left));
+        main.style.zoom = String(Math.round(zoom * 1000) / 1000);
+      }
+    } else if (!main.style.zoom) {
+      main.style.zoom = '1.1';   // fewer than six highlights: nothing to line up, same look
+    }
+    // The profile picture, PIC_SIZE points across.
+    var pic = main.querySelector('header img[alt*="profile picture" i]') || main.querySelector('header img');
+    if (pic) {
+      if (!pic.__flBox) {
+        var box = pic, best = null;
+        for (var i = 0; i < 5 && box && box !== main; i++) {
+          box = box.parentElement;
+          var r = box && box.getBoundingClientRect();
+          if (r && r.width < innerWidth / 2.5) best = box;
+        }
+        pic.__flBox = best;
+      }
+      var b = pic.__flBox;
+      var w = pic.getBoundingClientRect().width;
+      if (b && w > 0 && Math.abs(w - PIC_SIZE) > 0.5) {
+        var pz = parseFloat(b.style.zoom) || 1;
+        b.style.zoom = String(Math.round(pz * PIC_SIZE / w * 1000) / 1000);
+      }
+    }
+  }
+
+  // Feedback from the refresh page: the author's profile opened with ?fl_dm=1. Tap its "Message"
+  // button once, which opens the chat here (nothing is sent).
+  var dmTried = 0;
+  function feedbackDmStep() {
+    if (TAB !== 'messages' || location.search.indexOf('fl_dm=1') === -1 || window.__flDmDone || dmTried > 40) return;
+    dmTried++;
+    var btn = [].filter.call(document.querySelectorAll('main [role="button"], main button, main a'), function (b) {
+      return (b.textContent || '').trim() === 'Message';
+    })[0];
+    if (!btn) return;
+    window.__flDmDone = true;
+    btn.click();
+  }
+
   /* ---------- run ---------- */
   var queued = false;
   function tick() {
@@ -1604,6 +1755,8 @@
     noRepostStep();
     storyAdStep();
     if (TAB === 'home' || TAB === 'messages') dmBadgeStep();
+    ownProfileLookStep();
+    feedbackDmStep();
     // The app's feed is in place (or this isn't the Home feed): show the page.
     if (!feedCoverNeeded()) document.documentElement.classList.remove('fl-early');
   }

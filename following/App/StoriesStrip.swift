@@ -26,6 +26,9 @@ final class StoriesModel: ObservableObject {
     /// Back on the story row: Instagram's whole page shows for a moment before extras.js trims
     /// it to the row, so the row stays hidden until the page says it's ready ("stripReady").
     private var awaitingRow = false
+    /// The orange banner is showing: no (i) next to the version above the stories (the banner
+    /// has its own).
+    var bannerShown = false { didSet { if bannerShown != oldValue { pushBanner() } } }
     private var awaitingTimer: Timer?
     /// "Stories: 12/80 seen", passed on to the Home feed for under "You're all caught up".
     private var storyCount = ""
@@ -61,7 +64,7 @@ final class StoriesModel: ObservableObject {
         }
         strip.onMessage = { [weak self] type, value in
             guard let self else { return }
-            if type == "stripReady" { self.rowReady(); return }
+            if type == "stripReady" { self.rowReady(); self.pushBanner(); return }
             // Pulled down on the story row (which keeps the drag): refresh Home, spinner included.
             if type == "pullRefresh" { self.pullRefresh(); return }
             if type == "storyCount", let text = value as? String {
@@ -78,7 +81,12 @@ final class StoriesModel: ObservableObject {
                 self.place()
             }
         }
-        home.onRefresh = { [weak strip] in strip?.webView.reload() }
+        // Pull to refresh reloads the story row too. While it reloads, Instagram's whole page
+        // would show in the row for a moment: show a still picture of the row until it's ready.
+        home.onRefresh = { [weak self, weak strip] in
+            self?.freezeRow()
+            strip?.webView.reload()
+        }
         // The Friends feed opens posts, profiles and comments full screen over the feed.
         home.onMessage = { [weak self] type, value in
             guard type == "openOverlay", let s = value as? String, let url = URL(string: s),
@@ -145,7 +153,21 @@ final class StoriesModel: ObservableObject {
         }
     }
 
+    /// A still picture of the story row, over it while it reloads.
+    private var rowSnapshot: UIView?
+
+    private func freezeRow() {
+        guard let strip, !expanded, rowSnapshot == nil, let sv = strip.webView.superview,
+              let snap = strip.webView.snapshotView(afterScreenUpdates: false) else { return }
+        snap.frame = strip.webView.frame
+        sv.addSubview(snap)
+        rowSnapshot = snap
+        waitForRow()
+    }
+
     private func rowReady() {
+        rowSnapshot?.removeFromSuperview()
+        rowSnapshot = nil
         awaitingTimer?.invalidate()
         awaitingTimer = nil
         guard awaitingRow else { return }
@@ -210,6 +232,10 @@ final class StoriesModel: ObservableObject {
         control.beginRefreshing()
         feed.setContentOffset(CGPoint(x: 0, y: -feed.adjustedContentInset.top - control.frame.height), animated: true)
         control.sendActions(for: .valueChanged)
+    }
+
+    private func pushBanner() {
+        strip?.webView.evaluateJavaScript("window.__flSetBanner && window.__flSetBanner(\(bannerShown))", completionHandler: nil)
     }
 
     private func pushStoryCount() {

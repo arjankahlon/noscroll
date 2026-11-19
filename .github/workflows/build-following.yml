@@ -39,7 +39,14 @@ jobs:
       - name: Build (unsigned)
         working-directory: following
         run: |
-          VERSION="1.0.${GITHUB_RUN_NUMBER}"
+          # The version people see: SERIES for the first build of a series, then SERIES.1,
+          # SERIES.2, ... BASE is the GitHub build number that started the series. To start a new
+          # series (say 1.3), set SERIES="1.3" and BASE to the next build's number. The build
+          # number (CFBundleVersion, buildVersion in source.json) keeps counting up regardless:
+          # SideStore and the app's update banner compare that.
+          SERIES="1.2"; BASE=12
+          N=$((GITHUB_RUN_NUMBER - BASE))
+          if [ "$N" -le 0 ]; then VERSION="$SERIES"; else VERSION="$SERIES.$N"; fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           xcodebuild build \
             -project Following.xcodeproj \

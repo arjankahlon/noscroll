@@ -86,6 +86,7 @@ struct RootTabs: View {
     @StateObject private var stories = StoriesModel()
     @StateObject private var reminder = RefreshReminder()
     @ObservedObject private var dmBadge = DMBadge.shared
+    @ObservedObject private var guide = Guide.shared
     @ObservedObject private var profilePic = ProfilePic.shared
 
     /// Icons only, no labels. Profile shows your own picture once the app has it.
@@ -102,9 +103,16 @@ struct RootTabs: View {
     var body: some View {
         VStack(spacing: 0) {
             // From 5 days after SideStore last re-signed the app, until it re-signs it again.
-            if reminder.show { RefreshBanner(reminder: reminder) }
+            if reminder.show {
+                RefreshBanner(reminder: reminder)
+                // The banner sits a little higher than its full height: the gap below keeps the
+                // stories line where it would be, with more room above it.
+                Color(.systemBackground).frame(height: 8)
+            }
             content
         }
+        // How to refresh in SideStore: from the (i) above the stories or on the orange banner.
+        .fullScreenCover(isPresented: $guide.show) { RefreshGuideView(reminder: reminder) }
     }
 
     private var content: some View {
@@ -114,6 +122,8 @@ struct RootTabs: View {
             TabView(selection: Binding(
                 get: { selection },
                 set: { newValue in
+                    // A light tap you can feel on every tab bar button.
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     // Tapping the tab you are already on goes back to its start page.
                     if newValue == selection { tabs.goHome(newValue) }
                     selection = newValue
@@ -157,7 +167,14 @@ struct RootTabs: View {
                     .transition(.opacity)
             }
         }
+        .onChange(of: reminder.show) { _, shown in stories.bannerShown = shown }
+        // Feedback (on the refresh page): a chat with the author, in the Messages tab.
+        .onChange(of: guide.feedbackRequest) { _, _ in
+            selection = .messages
+            tabs.controller(for: .messages).open(Guide.feedbackURL)
+        }
         .onAppear {
+            stories.bannerShown = reminder.show
             stories.attach(home: tabs.controller(for: .home), strip: tabs.controller(for: .stories))
         }
     }
@@ -210,6 +227,10 @@ final class TabWebViews: ObservableObject {
     /// page. Reload them when you switch to them.
     func didShow(_ tab: InstaTab) {
         controller(for: tab).reloadIfSignedOut()
+        // Back on Home: a "You're all caught up" check on screen draws itself in again.
+        if tab == .home {
+            controller(for: tab).webView.evaluateJavaScript("window.__flReplayCheck && window.__flReplayCheck()", completionHandler: nil)
+        }
     }
 }
 

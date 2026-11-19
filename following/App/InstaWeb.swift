@@ -87,7 +87,9 @@ final class InstaWebController: NSObject, ObservableObject {
             content.addUserScript(WKUserScript(source: bootstrap, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         }
         content.addUserScript(WKUserScript(source: InstaWeb.privacyHookSource, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        content.addUserScript(WKUserScript(source: "window.__FOLLOWING_TAB = '\(tab.title.lowercased())';\n" + InstaWeb.extrasSource,
+        let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+            .filter { $0.isNumber || $0 == "." }
+        content.addUserScript(WKUserScript(source: "window.__FOLLOWING_TAB = '\(tab.title.lowercased())';\nwindow.__FOLLOWING_VERSION = '\(version)';\n" + InstaWeb.extrasSource,
                                            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
         let cfg = WKWebViewConfiguration()
@@ -119,6 +121,13 @@ final class InstaWebController: NSObject, ObservableObject {
         guard !loaded else { return }
         loaded = true
         loadStart()
+    }
+
+    /// Open an address in this tab. Counts as its first load, so the tab doesn't replace it with
+    /// its start page when it first appears.
+    func open(_ url: URL) {
+        loaded = true
+        webView.load(URLRequest(url: url))
     }
 
     func loadStart() {
@@ -165,6 +174,15 @@ final class InstaWebController: NSObject, ObservableObject {
         }
         if type == "profilePic", let address = dict["value"] as? String {
             ProfilePic.shared.update(from: address)
+            return
+        }
+        if type == "haptic" {
+            // The "success" tap as the caught-up check finishes drawing.
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            return
+        }
+        if type == "showGuide" {
+            Guide.shared.show = true
             return
         }
         if type == "dmBadge" {

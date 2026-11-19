@@ -173,8 +173,8 @@
           "kind": "isolate",
           "label": "One video at a time",
           "patterns": [
-            "^/reel/[^/]+",
-            "^/p/[^/]+"
+            "^/reel/[^/]+/?(\\?.*)?$",
+            "^/p/[^/]+/?(\\?.*)?$"
           ],
           "onAdvance": "back",
           "defaultEnabled": true
@@ -212,6 +212,13 @@
           ],
           "redirect": "/?variant=following",
           "defaultEnabled": true
+        },
+        "threads-links": {
+          "kind": "style",
+          "label": "Hide Threads links",
+          "css": "a[href*='threads.com'], a[href*='threads.net'] { display: none !important; }",
+          "defaultEnabled": true,
+          "source": "Following: no Threads button on profiles."
         },
         "for-you-link": {
           "kind": "style",

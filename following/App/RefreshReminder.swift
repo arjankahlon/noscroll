@@ -165,14 +165,20 @@ struct RefreshBanner: View {
             Text("· \(reminder.bannerDetail)")
                 .font(.system(size: 15, weight: .regular))
                 .opacity(0.85)
+            // (i): how to refresh, full screen.
+            Button { Guide.shared.show = true } label: {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .accessibilityLabel("How to refresh")
         }
         .lineLimit(1)
         .minimumScaleFactor(0.85)
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.top, 4)
+        .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
         .background(Color.orange.ignoresSafeArea(edges: .top))
-        .accessibilityElement(children: .combine)
     }
 }
