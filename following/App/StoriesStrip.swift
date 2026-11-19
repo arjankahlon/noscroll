@@ -20,6 +20,13 @@ final class StoriesModel: ObservableObject {
     /// The full-screen layer is showing a story (Instagram's viewer has its own close button).
     /// Otherwise it is a profile or post opened from a story, and the app shows a back button.
     @Published private(set) var onStoryPage = false
+    /// A post or profile tapped in the feed is loading: the layer shows at once, with a spinner,
+    /// instead of nothing happening for a couple of seconds.
+    @Published private(set) var opening = false
+    /// Back on the story row: Instagram's whole page shows for a moment before extras.js trims
+    /// it to the row, so the row stays hidden until the page says it's ready ("stripReady").
+    private var awaitingRow = false
+    private var awaitingTimer: Timer?
 
     /// Height of Instagram's story row, measured by the page. 0 until it has loaded.
     private var height: CGFloat = 0
@@ -45,8 +52,17 @@ final class StoriesModel: ObservableObject {
         strip.webView.isHidden = true
         strip.loadIfNeeded()
 
+        strip.onCommit = { [weak self] in
+            guard let self, self.opening else { return }
+            self.opening = false
+            self.place()
+        }
         strip.onMessage = { [weak self] type, value in
-            guard let self, type == "trayHeight", let h = value as? Double, h > 0 else { return }
+            guard let self else { return }
+            if type == "stripReady" { self.rowReady(); return }
+            // Saved or unsaved a post from the feed's bookmark: back to the feed.
+            if type == "closeOverlay" { if self.expanded { self.back() }; return }
+            guard type == "trayHeight", let h = value as? Double, h > 0 else { return }
             if abs(CGFloat(h) - self.height) > 0.5 {
                 self.height = CGFloat(h)
                 self.pushHeight()
@@ -55,10 +71,10 @@ final class StoriesModel: ObservableObject {
         }
         home.onRefresh = { [weak strip] in strip?.webView.reload() }
         // The Friends feed opens posts, profiles and comments full screen over the feed.
-        home.onMessage = { [weak strip] type, value in
+        home.onMessage = { [weak self] type, value in
             guard type == "openOverlay", let s = value as? String, let url = URL(string: s),
                   url.scheme == "https", url.host?.hasSuffix("instagram.com") == true else { return }
-            strip?.webView.load(URLRequest(url: url))
+            self?.open(url)
         }
 
         observers.append(home.webView.observe(\.url, options: [.new]) { [weak self] wv, _ in
@@ -82,17 +98,62 @@ final class StoriesModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if self.onStoryPage != story { self.onStoryPage = story }
+                // Still on the row while a tapped post or profile starts loading: stay open.
+                if self.opening && !open { return }
                 guard self.expanded != open else { return }
                 self.expanded = open
+                if !open { self.waitForRow() }
                 self.place()
             }
         })
         place()
     }
 
+    /// Open a post, profile or comments from the feed full screen.
+    func open(_ url: URL) {
+        guard let strip else { return }
+        opening = true
+        expanded = true
+        place()
+        strip.webView.load(URLRequest(url: url))
+        // Never spin forever.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, self.opening else { return }
+            self.opening = false
+            self.place()
+        }
+    }
+
+    /// Hide the row until the page has trimmed itself to it (or 3 seconds pass).
+    private func waitForRow() {
+        awaitingRow = true
+        awaitingTimer?.invalidate()
+        awaitingTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.rowReady() }
+        }
+    }
+
+    private func rowReady() {
+        awaitingTimer?.invalidate()
+        awaitingTimer = nil
+        guard awaitingRow else { return }
+        awaitingRow = false
+        place()
+    }
+
     /// The back button over a profile or post opened from a story.
     func back() {
         guard let strip else { return }
+        // Still loading what was tapped: cancel it and go back to the row.
+        if opening {
+            opening = false
+            strip.webView.stopLoading()
+            expanded = false
+            waitForRow()
+            place()
+            strip.loadStart()
+            return
+        }
         // Back to a story (you opened the profile from it): let Instagram go back.
         // Back to the story row itself, or nothing to go back to: reload the row cleanly.
         if let previous = strip.webView.backForwardList.backItem, previous.url.path != "/", !previous.url.path.isEmpty {
@@ -114,7 +175,7 @@ final class StoriesModel: ObservableObject {
             wv.frame = layer.bounds
             wv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             wv.scrollView.isScrollEnabled = true
-            wv.isHidden = false
+            wv.isHidden = opening
         } else {
             let sv = home.webView.scrollView
             if wv.superview !== sv {
@@ -125,7 +186,7 @@ final class StoriesModel: ObservableObject {
             wv.frame = CGRect(x: 0, y: 0, width: home.webView.bounds.width, height: max(height, 120))
             wv.scrollView.isScrollEnabled = false
             wv.scrollView.contentOffset = .zero
-            wv.isHidden = !(homeOnFeed && height > 0)
+            wv.isHidden = !(homeOnFeed && height > 0) || awaitingRow
         }
     }
 

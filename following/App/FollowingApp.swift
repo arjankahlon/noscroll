@@ -133,6 +133,9 @@ struct RootTabs: View {
             if stories.expanded && selection == .home {
                 StoriesLayer(model: stories)
                     .ignoresSafeArea(.container, edges: .bottom)
+                    .overlay {
+                        if stories.opening { ProgressView().controlSize(.large) }
+                    }
                     .overlay(alignment: .topLeading) {
                         if !stories.onStoryPage {
                             Button { stories.back() } label: {

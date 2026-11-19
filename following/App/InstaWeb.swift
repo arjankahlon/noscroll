@@ -40,6 +40,15 @@ enum InstaWeb {
         return s
     }()
 
+    /// Instagram's "you're leaving Instagram" redirect (l.instagram.com/?u=...), used by link
+    /// stickers on stories and links in bios: the real address it leads to.
+    static func outboundTarget(_ url: URL) -> URL? {
+        guard let host = url.host?.lowercased(), host == "l.instagram.com" || host == "l.facebook.com",
+              let u = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "u" })?.value,
+              let target = URL(string: u), ["http", "https"].contains(target.scheme?.lowercased() ?? "") else { return nil }
+        return target
+    }
+
     /// Hosts that open inside the app. Anything else opens in a Safari sheet.
     static func staysInApp(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return true }
@@ -58,6 +67,8 @@ final class InstaWebController: NSObject, ObservableObject {
     var onMessage: ((String, Any?) -> Void)?
     /// Called on pull to refresh, after this tab reloads.
     var onRefresh: (() -> Void)?
+    /// Called when a page this browser loads starts to show (the first paint is coming).
+    var onCommit: (() -> Void)?
 
     init(tab: InstaTab) {
         self.tab = tab
@@ -184,12 +195,22 @@ extension InstaWebController: WKNavigationDelegate {
             decisionHandler(.cancel); return
         }
         let mainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        // A link sticker or bio link: straight to the website, in a Safari sheet.
+        if mainFrame, let target = InstaWeb.outboundTarget(url) {
+            decisionHandler(.cancel)
+            openOutside(target)
+            return
+        }
         if mainFrame, !InstaWeb.staysInApp(url) {
             decisionHandler(.cancel)
             openOutside(url)
             return
         }
         decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        onCommit?()
     }
 
     /// iOS can kill a background web view to save memory; reload instead of sitting blank.
@@ -219,7 +240,9 @@ extension InstaWebController: WKUIDelegate {
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url, navigationAction.targetFrame == nil {
-            if InstaWeb.staysInApp(url) { webView.load(URLRequest(url: url)) } else { openOutside(url) }
+            if let target = InstaWeb.outboundTarget(url) {
+                openOutside(target)
+            } else if InstaWeb.staysInApp(url) { webView.load(URLRequest(url: url)) } else { openOutside(url) }
         }
         return nil
     }

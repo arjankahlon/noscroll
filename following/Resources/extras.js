@@ -250,6 +250,7 @@
 
   // Stories strip: keep only Instagram's story row on the page.
   var isolated = [], stripBox = null, lastHeight = 0;
+  var storySeen = {};
 
   function restoreStrip() {
     for (var i = isolated.length - 1; i >= 0; i--) {
@@ -270,7 +271,10 @@
   function stripStep() {
     if (TAB !== 'stories') return;
     if (location.pathname !== '/') {
-      // Instagram's story viewer is open: show the page as it is.
+      // Instagram's story viewer is open: show the page as it is. Opening someone's stories
+      // shows you at least one, so they count as seen.
+      var sv = /^\/stories\/([^/]+)\//.exec(location.pathname);
+      if (sv && sv[1] !== 'highlights') storySeen[decodeURIComponent(sv[1])] = true;
       if (isolated.length) restoreStrip();
       return;
     }
@@ -312,14 +316,19 @@
         a.style.setProperty('min-height', '0', 'important');
         a.style.setProperty('top', '0', 'important');
       }
+      reportStripHeight(box);
+      // Trimmed to the row: the app can show it again (it hides it while it comes back).
+      post({ type: 'stripReady' });
+      return;
     }
     reportStripHeight(box);
   }
 
-  // Above the row: how many of the stories up now you've watched ("12/120 seen"). From
-  // Instagram's list for the row, updated from the row's own "seen" labels as you watch.
+  // Above the row: how many of the people with stories up you've watched ("Stories: 12/120
+  // seen"). Counted per person: watching any one of their current stories counts. From
+  // Instagram's list for the row ("seen" is when the last story you watched was posted, so
+  // within the last day means one that is still up), plus the stories you open here.
   // And "Your story" (Instagram always shows it, with a +) only while you have a story up.
-  var storySeen = {};
   function storyExtras(box, first) {
     var tray = window.__flTray;
     var row = first.parentElement;
@@ -337,12 +346,12 @@
       var lm = /^Story by (.+), (seen|not seen)$/.exec(labels[i].getAttribute('aria-label') || '');
       if (lm && lm[2] === 'seen') storySeen[lm[1]] = true;
     }
-    var total = 0, seenN = 0;
+    var total = 0, seenN = 0, dayAgo = Date.now() / 1000 - 86400;
     tray.forEach(function (r) {
       var u = r.user || {};
       if (String(u.pk) === me) return;
       total++;
-      if ((r.seen && r.seen >= r.latest_reel_media) || storySeen[u.username]) seenN++;
+      if ((r.seen && (r.seen >= r.latest_reel_media || r.seen > dayAgo)) || storySeen[u.username]) seenN++;
     });
     var c = document.getElementById('fl-story-count');
     if (!c) {
@@ -351,7 +360,7 @@
       c.style.cssText = 'position:absolute;top:4px;left:14px;z-index:5;font:600 12px/16px -apple-system,system-ui,sans-serif;color:#737373;pointer-events:none';
       document.body.appendChild(c);
     }
-    var text = seenN + '/' + total + ' seen';
+    var text = 'Stories: ' + seenN + '/' + total + ' seen';
     if (c.textContent !== text) c.textContent = text;
     // Room for the count above the circles.
     box.style.setProperty('padding-top', '18px', 'important');
@@ -437,6 +446,7 @@
       '#fl-ff .a{display:flex;align-items:center;gap:14px;padding:8px 12px 4px}',
       '#fl-ff .a button,#fl-ff .a a{all:unset;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:600;-webkit-tap-highlight-color:transparent}',
       '#fl-ff .a svg{width:24px;height:24px}',
+      '#fl-ff .a .sv{margin-left:auto}',
       '#fl-ff .like.on svg{fill:#ff3040;stroke:#ff3040}',
       '#fl-ff .t{padding:2px 12px}',
       '#fl-ff .t b{font-weight:600}',
@@ -448,6 +458,8 @@
       '#fl-ff .ago.old{color:#ed4956;font-weight:700}',
       '#fl-ff .cu{padding:28px 24px;text-align:center;border-bottom:.5px solid #efefef}',
       '#fl-ff .cu-t{font-weight:600;font-size:16px;margin-bottom:4px;color:#1f9d55}',
+      '#fl-ff .cu-ic{display:block;width:56px;height:56px;margin:0 auto 10px}',
+      '#fl-ff .cu-s button{all:unset;cursor:pointer;display:block;margin:10px auto 0;color:#0095f6;font-weight:600}',
       '#fl-ff .cu-s{color:#737373;font-size:14px;line-height:1.4}',
       '#fl-ff .end{padding:28px 24px 40px;text-align:center;color:#737373;font-size:15px;line-height:1.4}',
       '#fl-ff .end button{all:unset;cursor:pointer;color:#0095f6;font-weight:600}',
@@ -505,6 +517,8 @@
   }
   var HEART = 'M16.8 3.5c-2 0-3.6 1.1-4.8 2.8-1.2-1.7-2.8-2.8-4.8-2.8C4.3 3.5 2 5.9 2 8.9c0 5.6 8.6 11 10 11.6 1.4-.6 10-6 10-11.6 0-3-2.3-5.4-5.2-5.4z';
   var BUBBLE = 'M20.7 16.4A9.5 9.5 0 1 0 17 20.1L21.5 21.5z';
+  var PLANE = 'M21.5 2.5 2.5 9.8l7.3 3.2 3.2 7.5zM9.8 13 21.5 2.5';
+  var BOOKMARK = 'M19 21 12 16 5 21V3.5h14z';
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -731,7 +745,6 @@
 
   // Fill in the bio on cards already drawn once an account's profile arrives.
   function fillBios(id) {
-    if (ff.mode !== 'friends') return;
     var heads = document.querySelectorAll('#fl-ff .nl[data-uid="' + id + '"]');
     for (var i = 0; i < heads.length; i++) {
       var line = heads[i];
@@ -741,10 +754,16 @@
     }
   }
 
-  // A bio to show next to the name: no links, emails or line breaks; none if it's only emoji.
+  // A bio to show next to the name, in both Home feeds: for private accounts, and public ones
+  // with under 4,000 followers (not big public pages). No links, emails or line breaks; none if
+  // it's only emoji.
+  var BIO_MAX_FOLLOWERS = 4000;
   function bioLine(u) {
     var p = profileOf(u);
     if (!p || !p.b) return '';
+    var priv = typeof u.is_private === 'boolean' ? u.is_private :
+      (window.__flPrivacy || {})[(u.username || '').toLowerCase()] === true;
+    if (!priv && !(p.f < BIO_MAX_FOLLOWERS)) return '';
     var b = p.b
       .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
       .replace(/\S+@\S+\.\S+/g, '')
@@ -789,19 +808,17 @@
       x.addEventListener('click', function (e) { e.preventDefault(); openOver('/' + name + '/'); });
     });
     h.appendChild(av);
-    // Name (with the bio after it in Friends, on one line), and the post's location under it.
+    // Name (with the bio after it, on one line), and the post's location under it.
     var who = el('div', 'w');
     var line = el('div', 'nl');
     line.appendChild(un);
-    if (ff.mode === 'friends') {
-      var bio = bioLine(user);
-      if (bio) line.appendChild(el('span', 'bio', bio));
-      else if (!profileOf(user)) {
-        // Not looked up yet: the bio is added when it arrives.
-        line.dataset.uid = userId(user);
-        line.__flUser = user;
-        wantProfile(user);
-      }
+    var bio = bioLine(user);
+    if (bio) line.appendChild(el('span', 'bio', bio));
+    else if (!profileOf(user)) {
+      // Not looked up yet: the bio is added when it arrives.
+      line.dataset.uid = userId(user);
+      line.__flUser = user;
+      wantProfile(user);
     }
     who.appendChild(line);
     var loc = m.location;
@@ -859,8 +876,42 @@
     cm.setAttribute('aria-label', 'Comments');
     cm.appendChild(icon(BUBBLE, false));
     cm.addEventListener('click', function (e) { e.preventDefault(); openOver('/p/' + m.code + '/'); });
+    // Share: Instagram's own "Send to" dialog. It opens the post full screen and taps
+    // Instagram's Share button there (shareStep). Instagram's site has no Share on private
+    // accounts' posts, so those get the iPhone's share sheet with the link instead.
+    var sh = el('button', 'sh');
+    sh.type = 'button';
+    sh.setAttribute('aria-label', 'Share');
+    sh.appendChild(icon(PLANE, false));
+    sh.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (!isPrivate(m)) { openOver('/p/' + m.code + '/?fl_share=1'); return; }
+      var link = 'https://www.instagram.com/p/' + m.code + '/';
+      if (navigator.share) navigator.share({ url: link }).catch(function () {});
+      else if (navigator.clipboard) navigator.clipboard.writeText(link);
+    });
+    // Save: the feed doesn't say whether you've saved a post, so the bookmark starts empty. It
+    // opens the post, taps Instagram's own Save (or "Remove" when filled), and comes back
+    // (saveStep).
+    var sv = el('button', 'sv');
+    sv.type = 'button';
+    var setSaved = function (on) {
+      sv.dataset.on = on ? '1' : '';
+      sv.setAttribute('aria-label', on ? 'Remove from saved' : 'Save');
+      sv.textContent = '';
+      sv.appendChild(icon(BOOKMARK, on));
+    };
+    setSaved(m.has_viewer_saved === true);
+    sv.addEventListener('click', function (e) {
+      e.preventDefault();
+      var on = !sv.dataset.on;
+      setSaved(on);
+      openOver('/p/' + m.code + '/?fl_save=' + (on ? '1' : '0'));
+    });
     a.appendChild(like);
     a.appendChild(cm);
+    a.appendChild(sh);
+    a.appendChild(sv);
     p.appendChild(a);
 
     var t = el('div', 't');
@@ -1062,6 +1113,14 @@
     return added;
   }
 
+  // The green check over "You're all caught up" (a ring with a tick, like Instagram's).
+  function cuMark() {
+    var d = document.createElement('div');
+    d.innerHTML = '<svg class="cu-ic" viewBox="0 0 96 96" aria-hidden="true"><circle cx="48" cy="48" r="45" fill="none" stroke="#1f9d55" stroke-width="3"/>' +
+      '<path d="M30 49.5l12 12 24-26" fill="none" stroke="#1f9d55" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    return d.firstChild;
+  }
+
   // Friends, after "You're all caught up": earlier posts from friends that you've seen
   // but not liked, in Instagram's suggested order (the ranked feed), under a divider.
   function startUnliked(list) {
@@ -1069,9 +1128,25 @@
     ff.unliked = true;
     ff.caughtUp = false;
     ff.emptyRun = 0;
+    // At the top (nothing new above it, as after a refresh or reopening the app): keep the
+    // earlier posts folded away until "View earlier posts".
+    ff.collapsed = ff.cards === 0;
     var d = el('div', 'cu');
+    d.appendChild(cuMark());
     d.appendChild(el('div', 'cu-t', "You're all caught up"));
-    d.appendChild(el('div', 'cu-s', "You've seen the new posts from your friends. Here are earlier ones you haven't liked yet."));
+    var sub = el('div', 'cu-s', ff.collapsed ? "You've seen the new posts from your friends." :
+      "You've seen the new posts from your friends. Here are earlier ones you haven't liked yet.");
+    if (ff.collapsed) {
+      var open = el('button', '', 'View earlier posts');
+      open.type = 'button';
+      open.addEventListener('click', function () {
+        ff.collapsed = false;
+        sub.textContent = "Here are earlier posts from your friends you haven't liked yet.";
+        queue();
+      });
+      sub.appendChild(open);
+    }
+    d.appendChild(sub);
     list.appendChild(d);
   }
 
@@ -1171,6 +1246,7 @@
     var end = box.querySelector('.end');
     end.textContent = '';
     var hasTpl = !!(window.__flFeed && window.__flFeed.template);
+    if (ff.unliked && ff.collapsed) return;
     if (ff.unliked && !ff.error) {
       end.textContent = ff.r.more || !ff.r.started ? 'Loading more…' : "That's everything for now.";
       return;
@@ -1182,6 +1258,7 @@
       retry.addEventListener('click', function () { ff.error = false; ff.emptyRun = 0; queue(); });
       end.appendChild(retry);
     } else if ((ff.caughtUp || (!ff.more && hasTpl)) && !ff.showSeen && ff.held > 0) {
+      end.appendChild(cuMark());
       var t = el('div', '', "You're all caught up");
       t.className = 'cu-t';
       end.appendChild(t);
@@ -1194,7 +1271,7 @@
       });
       end.appendChild(more);
     } else if (!ff.more && hasTpl) {
-      if (ff.cards) end.appendChild(el('div', 'cu-t', "You're all caught up"));
+      if (ff.cards) { end.appendChild(cuMark()); end.appendChild(el('div', 'cu-t', "You're all caught up")); }
       else end.textContent = cfg.none;
     } else if (!ff.cards) {
       end.textContent = cfg.looking;
@@ -1303,7 +1380,7 @@
     if (added) ff.emptyRun = 0;
     // Friends: once caught up (or at the end of the feed), carry on with seen, unliked posts.
     if (mode === 'friends' && !ff.unliked && ff.started && (ff.caughtUp || !ff.more)) startUnliked(list);
-    if (ff.unliked && drawUnliked(list)) ff.emptyRun = 0;
+    if (ff.unliked && !ff.collapsed && drawUnliked(list)) ff.emptyRun = 0;
 
     // Load the next page when fewer than two screens of posts are left below.
     var end = box.querySelector('.end');
@@ -1311,7 +1388,7 @@
     // A run of pages with nothing to keep: keep going, but stop after 15 until you scroll.
     var source = ff.unliked ? 'home' : FEEDS[mode].source;
     var nextCursor = ff.unliked ? (ff.r.started ? ff.r.next : '') : (ff.started ? ff.next : '');
-    var hasMore = ff.unliked ? ff.r.more : (ff.more && !ff.caughtUp);
+    var hasMore = ff.unliked ? (ff.r.more && !ff.collapsed) : (ff.more && !ff.caughtUp);
     if (near && hasMore && typeof nextCursor === 'string' && !ff.loading && !ff.error && ff.emptyRun < 15 && ready) {
       ff.loading = true;
       var state = ff;
@@ -1320,7 +1397,7 @@
         if (state !== ff) return;
         ff.loading = false;
         drawPages(list);
-        if (ff.unliked) drawUnliked(list);
+        if (ff.unliked && !ff.collapsed) drawUnliked(list);
         if (ff.cards === before) ff.emptyRun++; else ff.emptyRun = 0;
         queue();
       }, function () {
@@ -1335,6 +1412,62 @@
     setEnd(box);
   }
   window.addEventListener('scroll', function (e) { if (e.isTrusted && ff.emptyRun >= 15) { ff.emptyRun = 10; queue(); } }, { passive: true });
+
+  // A post opened from the feed's share button: tap Instagram's Share on it once it's there.
+  var shareTried = 0;
+  function shareStep() {
+    if (TAB !== 'stories' || !/^\/p\//.test(location.pathname) || location.search.indexOf('fl_share=1') === -1) return;
+    if (window.__flShareDone || shareTried > 40) return;
+    shareTried++;
+    var svg = document.querySelector('svg[aria-label="Share"]');
+    var btn = svg && (svg.closest('[role="button"],button,a') || svg.parentElement);
+    if (!btn) return;
+    window.__flShareDone = true;
+    btn.click();
+  }
+
+  // A post opened from the feed's bookmark: tap Instagram's Save (fl_save=1) or Remove
+  // (fl_save=0), unless it's already that way, then go back to the feed.
+  var saveTried = 0;
+  function saveStep() {
+    if (TAB !== 'stories' || !/^\/p\//.test(location.pathname)) return;
+    var want = /[?&]fl_save=([01])/.exec(location.search);
+    if (!want || window.__flSaveDone || saveTried > 40) return;
+    saveTried++;
+    var save = document.querySelector('svg[aria-label="Save"]');
+    var remove = document.querySelector('svg[aria-label="Remove"]');
+    if (!save && !remove) return;
+    window.__flSaveDone = true;
+    var target = want[1] === '1' ? save : remove;
+    var dry = false;
+    try { dry = localStorage.getItem('following.saveDry') === '1'; } catch (e) {}  // testing only
+    if (target && !dry) (target.closest('[role="button"],button,a') || target.parentElement).click();
+    window.__flSaveClicked = !!target;
+    setTimeout(function () { post({ type: 'closeOverlay' }); }, 700);
+  }
+
+  // Instagram's Share dialog: only "Copy link" and "iMessage" along the bottom (no WhatsApp,
+  // Messenger, Facebook, Threads, Email, X or "See all").
+  var SHARE_HIDE = { 'WhatsApp': 1, 'Messenger': 1, 'Facebook': 1, 'Threads': 1, 'Email': 1, 'X': 1, 'See all': 1 };
+  function shareAppsStep() {
+    var titles = document.querySelectorAll('[role="dialog"] svg title, [role="dialog"] span');
+    for (var i = 0; i < titles.length; i++) {
+      if (!SHARE_HIDE[titles[i].textContent.trim()]) continue;
+      // The app's tile: the box whose parent holds the whole row.
+      var n = titles[i].parentNode;
+      while (n && n.parentElement && n.parentElement.childElementCount < 5) n = n.parentElement;
+      if (n && n.style && n.style.display !== 'none') n.style.setProperty('display', 'none', 'important');
+    }
+  }
+
+  // No Repost, anywhere in the app (Instagram's post pages and Reels have one).
+  function noRepostStep() {
+    var icons = document.querySelectorAll('svg[aria-label="Repost"]');
+    for (var i = 0; i < icons.length; i++) {
+      var b = icons[i].closest('[role="button"],button,a') || icons[i].parentElement;
+      if (b && b.style.display !== 'none') b.style.setProperty('display', 'none', 'important');
+    }
+  }
 
   /* ---------- run ---------- */
   var queued = false;
@@ -1352,6 +1485,10 @@
     stripStep();
     modeSwitchStep();
     ownFeedStep();
+    shareStep();
+    saveStep();
+    shareAppsStep();
+    noRepostStep();
     // The app's feed is in place (or this isn't the Home feed): show the page.
     document.documentElement.classList.remove('fl-early');
   }
