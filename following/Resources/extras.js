@@ -1698,6 +1698,61 @@
     } else if (!main.style.zoom) {
       main.style.zoom = '1.1';   // fewer than six highlights: nothing to line up, same look
     }
+    // Less empty space above the picture: no gap above the header, and no "Note..." bubble
+    // (it also reserved a band of space above the picture).
+    var header = main.querySelector('header');
+    if (header && !header.dataset.flTight) {
+      header.dataset.flTight = '1';
+      header.style.setProperty('margin-top', '0', 'important');
+    }
+    if (header) {
+      var note = [].filter.call(header.querySelectorAll('div, span'), function (e) {
+        return e.childElementCount === 0 && /^Note\.\.\.$/.test((e.textContent || '').trim());
+      })[0];
+      // The bubble: the box around the text that's still small (not the picture's column).
+      var bubble = note, nb = null;
+      for (var q = 0; q < 6 && bubble; q++) {
+        var br = bubble.getBoundingClientRect();
+        if (br.width > 0 && br.width < 140 && br.height < 60) nb = bubble;
+        bubble = bubble.parentElement;
+      }
+      if (nb && nb.style.display !== 'none') nb.style.setProperty('display', 'none', 'important');
+      // Its wrapper kept the band of space too: in the picture's column, hide everything that
+      // isn't the picture.
+      var pimg = header.querySelector('img');
+      var colm = pimg, pcol = null;
+      for (var c = 0; c < 10 && colm && colm !== header; c++) {
+        colm = colm.parentElement;
+        if (colm && colm.getBoundingClientRect().width < window.innerWidth / 2) pcol = colm;
+      }
+      if (pcol && nb) {
+        [].forEach.call(pcol.querySelectorAll('*'), function (e) {
+          if (e.contains(pimg) || pimg.contains(e) || e.style.display === 'none') return;
+          if (e.contains(nb) || nb.contains(e)) e.style.setProperty('display', 'none', 'important');
+        });
+      }
+    }
+    // The stats (posts / followers / following): spread across, clear of the right edge.
+    if (header) {
+      var stat = [].filter.call(header.querySelectorAll('a, span, div, li'), function (e) {
+        return e.textContent.length < 30 && /following\s*$/.test(e.textContent.trim());
+      }).pop();
+      var row = stat;
+      for (var k = 0; k < 4 && row; k++) {
+        row = row.parentElement;
+        if (row && row.childElementCount === 3 && getComputedStyle(row).display === 'flex') break;
+      }
+      if (row && row.childElementCount === 3 && !row.dataset.flStats) {
+        row.dataset.flStats = '1';
+        // Full width of its column, the three spread evenly, clear of the right edge.
+        row.style.setProperty('width', '100%', 'important');
+        row.style.setProperty('box-sizing', 'border-box', 'important');
+        row.style.setProperty('justify-content', 'space-between', 'important');
+        row.style.setProperty('padding-right', '16px', 'important');
+        row.style.setProperty('gap', '10px', 'important');
+        [].forEach.call(row.querySelectorAll('*'), function (e) { e.style.setProperty('white-space', 'nowrap', 'important'); });
+      }
+    }
     // The profile picture, PIC_SIZE points across.
     var pic = main.querySelector('header img[alt*="profile picture" i]') || main.querySelector('header img');
     if (pic) {
@@ -1716,6 +1771,7 @@
         var pz = parseFloat(b.style.zoom) || 1;
         b.style.zoom = String(Math.round(pz * PIC_SIZE / w * 1000) / 1000);
       }
+
     }
   }
 
