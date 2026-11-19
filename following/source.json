@@ -15,6 +15,15 @@
       "category": "social",
       "versions": [
         {
+          "version": "1.0.9",
+          "buildVersion": "9",
+          "date": "2026-11-19T01:03:07Z",
+          "localizedDescription": "Built from dd076eb",
+          "downloadURL": "https://github.com/arjankahlon/noscroll/releases/download/v1.0.9/Following.ipa",
+          "size": 142014,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.8",
           "buildVersion": "8",
           "date": "2026-11-17T22:59:06Z",
@@ -42,10 +51,10 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.8",
-      "versionDate": "2026-11-17T22:59:06Z",
-      "downloadURL": "https://github.com/arjankahlon/noscroll/releases/download/v1.0.8/Following.ipa",
-      "size": 135487
+      "version": "1.0.9",
+      "versionDate": "2026-11-19T01:03:07Z",
+      "downloadURL": "https://github.com/arjankahlon/noscroll/releases/download/v1.0.9/Following.ipa",
+      "size": 142014
     }
   ],
   "news": []
