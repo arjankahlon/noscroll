@@ -391,7 +391,7 @@
       v.appendChild(info);
       document.body.appendChild(v);
     }
-    var text = 'Stories: ' + seenN + '/' + total + ' seen';
+    var text = seenN + '/' + total + ' stories seen';
     if (c.textContent !== text) {
       c.textContent = text;
       // The app passes it on to the Home feed, for under "You're all caught up".
@@ -448,9 +448,18 @@
     try { return sessionStorage.getItem(MODE_KEY) === 'following' ? 'following' : 'friends'; } catch (e) { return 'friends'; }
   }
   function setFeedMode(m) {
+    var changed = m !== feedMode();
     try { sessionStorage.setItem(MODE_KEY, m); } catch (e) {}
     document.scrollingElement.scrollTop = 0;
-    queue();
+    if (!changed) { queue(); return; }
+    // Draw the other feed now. Caught up there: its check draws in with its own "success" tap.
+    // Otherwise: a light tap, the same as the tab bar's buttons.
+    tick();
+    var caughtUp = [].some.call(document.querySelectorAll('#fl-ff .cu-ic'), function (svg) {
+      var r = svg.getBoundingClientRect();
+      return r.height > 0 && r.top < window.innerHeight && r.bottom > 0;
+    });
+    if (!caughtUp) post({ type: 'haptic', value: 'tap' });
   }
 
   function addModeStyle() {

@@ -177,8 +177,13 @@ final class InstaWebController: NSObject, ObservableObject {
             return
         }
         if type == "haptic" {
-            // The "success" tap as the caught-up check finishes drawing.
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            if (dict["value"] as? String) == "tap" {
+                // Switching between Friends and Following: the tab bar's light tap.
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            } else {
+                // The "success" tap as the caught-up check finishes drawing.
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            }
             return
         }
         if type == "showGuide" {
