@@ -176,6 +176,9 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    FeedbackLine { dismiss() }
+                }
+                Section {
                     Picker("Appearance", selection: $settings.appearance) {
                         ForEach(AppSettings.Appearance.allCases) { Text($0.title).tag($0) }
                     }

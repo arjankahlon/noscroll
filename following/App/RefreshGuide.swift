@@ -12,6 +12,39 @@ final class Guide: ObservableObject {
     static let feedbackURL = URL(string: "https://www.instagram.com/arjan.kahlon/?fl_dm=1")!
 }
 
+/// "Following v1.x by Arjan Kahlon" and a Feedback button, which closes the page it's on and
+/// opens a chat with the author in Messages. On the refresh guide and at the top of App settings.
+struct FeedbackLine: View {
+    /// Closes the page the line is on.
+    let close: () -> Void
+
+    private var version: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? ""
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Following v\(version) by Arjan Kahlon")
+            Button {
+                close()
+                Guide.shared.feedbackRequest += 1
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "message.fill").font(.system(size: 13))
+                    Text("Feedback")
+                }
+                .padding(.horizontal, 8).padding(.vertical, 2)
+                .background(Capsule().stroke(Color.blue, lineWidth: 1.2))
+            }
+            .buttonStyle(.plain)
+        }
+        .font(.system(size: 17))
+        .foregroundStyle(.blue)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+    }
+}
+
 /// One screen, no scrolling: how to keep Following (and SideStore itself) from expiring.
 /// The pictures are simple drawings of what you tap, not screenshots.
 struct RefreshGuideView: View {
@@ -37,26 +70,8 @@ struct RefreshGuideView: View {
             }
             .padding(.bottom, 10)
 
-            // Who made it, and a way to send feedback (opens Messages).
-            HStack(spacing: 6) {
-                Text("Following v\(version) by Arjan Kahlon")
-                Button {
-                    dismiss()
-                    Guide.shared.feedbackRequest += 1
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "message.fill").font(.system(size: 13))
-                        Text("Feedback")
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(Capsule().stroke(Color.blue, lineWidth: 1.2))
-                }
-            }
-            .font(.system(size: 17))
-            .foregroundStyle(.blue)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .padding(.bottom, 12)
+            FeedbackLine { dismiss() }
+                .padding(.bottom, 12)
 
             Text("Refresh the app")
                 .font(.system(size: 28, weight: .bold))
