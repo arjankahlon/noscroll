@@ -27,6 +27,8 @@ final class StoriesModel: ObservableObject {
     /// it to the row, so the row stays hidden until the page says it's ready ("stripReady").
     private var awaitingRow = false
     private var awaitingTimer: Timer?
+    /// "Stories: 12/80 seen", passed on to the Home feed for under "You're all caught up".
+    private var storyCount = ""
 
     /// Height of Instagram's story row, measured by the page. 0 until it has loaded.
     private var height: CGFloat = 0
@@ -60,6 +62,13 @@ final class StoriesModel: ObservableObject {
         strip.onMessage = { [weak self] type, value in
             guard let self else { return }
             if type == "stripReady" { self.rowReady(); return }
+            // Pulled down on the story row (which keeps the drag): refresh Home, spinner included.
+            if type == "pullRefresh" { self.pullRefresh(); return }
+            if type == "storyCount", let text = value as? String {
+                self.storyCount = text
+                self.pushStoryCount()
+                return
+            }
             // Saved or unsaved a post from the feed's bookmark: back to the feed.
             if type == "closeOverlay" { if self.expanded { self.back() }; return }
             guard type == "trayHeight", let h = value as? Double, h > 0 else { return }
@@ -88,9 +97,12 @@ final class StoriesModel: ObservableObject {
         })
         observers.append(home.webView.observe(\.isLoading, options: [.new]) { [weak self] wv, _ in
             guard !wv.isLoading else { return }
-            Task { @MainActor in self?.pushHeight() }
+            Task { @MainActor in self?.pushHeight(); self?.pushStoryCount() }
         })
         observers.append(strip.webView.observe(\.url, options: [.new]) { [weak self] wv, _ in
+            #if DEBUG
+            DebugHooks.log("strip url \(wv.url?.absoluteString ?? "nil")")
+            #endif
             // Anything other than the strip's own page (a story, or a profile opened from one)
             // is shown full screen.
             let open = !(wv.url?.path == "/" || wv.url?.path.isEmpty == true)
@@ -190,6 +202,28 @@ final class StoriesModel: ObservableObject {
         }
     }
 
+    private func pullRefresh() {
+        guard !expanded, homeOnFeed, let home else { return }
+        let feed = home.webView.scrollView
+        guard let control = feed.refreshControl, !control.isRefreshing,
+              feed.contentOffset.y <= -feed.adjustedContentInset.top + 2 else { return }
+        control.beginRefreshing()
+        feed.setContentOffset(CGPoint(x: 0, y: -feed.adjustedContentInset.top - control.frame.height), animated: true)
+        control.sendActions(for: .valueChanged)
+    }
+
+    private func pushStoryCount() {
+        guard !storyCount.isEmpty, let home else { return }
+        let js = "window.__flSetStoryCount && window.__flSetStoryCount(\(Self.jsString(storyCount)))"
+        home.webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    private static func jsString(_ s: String) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
+        let arr = String(data: data, encoding: .utf8) ?? "[\"\"]"
+        return String(arr.dropFirst().dropLast())
+    }
+
     /// Tell the Following feed how tall a gap to leave for the strip.
     private func pushHeight() {
         guard height > 0, let home else { return }
@@ -219,3 +253,4 @@ struct StoriesLayer: UIViewRepresentable {
         if model.layerView !== view { DispatchQueue.main.async { model.layerView = view } }
     }
 }
+

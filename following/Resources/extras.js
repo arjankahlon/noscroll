@@ -98,6 +98,10 @@
     for (var d = 0; d < 8 && node && node !== document.body; d++) {
       node = node.parentElement;
       if (!node || node.tagName === 'MAIN') break;
+      // Never a box that also holds the page's header: on a private profile you don't follow,
+      // "Suggested for you" sits right under the profile, and the whole page is shorter than the
+      // screen, so climbing further would hide the profile itself.
+      if (node.querySelector('header')) break;
       var r = node.getBoundingClientRect();
       if (r.height > window.innerHeight * 0.9) break;
       if (r.width >= window.innerWidth * 0.9) best = node;
@@ -361,9 +365,30 @@
       document.body.appendChild(c);
     }
     var text = 'Stories: ' + seenN + '/' + total + ' seen';
-    if (c.textContent !== text) c.textContent = text;
+    if (c.textContent !== text) {
+      c.textContent = text;
+      // The app passes it on to the Home feed, for under "You're all caught up".
+      post({ type: 'storyCount', value: text });
+    }
     // Room for the count above the circles.
     box.style.setProperty('padding-top', '18px', 'important');
+  }
+
+  // Pull to refresh from the story row: this small browser keeps the drag, so it tells the app
+  // when you pull down on it (the app refreshes Home if the feed is at the top).
+  var pullFrom = null, pulled = false;
+  if (TAB === 'stories') {
+    document.addEventListener('touchstart', function (e) {
+      var t = e.touches && e.touches[0];
+      pullFrom = t && location.pathname === '/' ? { x: t.clientX, y: t.clientY } : null;
+      pulled = false;
+    }, { capture: true, passive: true });
+    document.addEventListener('touchmove', function (e) {
+      var t = e.touches && e.touches[0];
+      if (!pullFrom || pulled || !t) return;
+      var dy = t.clientY - pullFrom.y, dx = Math.abs(t.clientX - pullFrom.x);
+      if (dy > 70 && dy > dx * 2) { pulled = true; post({ type: 'pullRefresh' }); }
+    }, { capture: true, passive: true });
   }
 
   function reportStripHeight(box) {
@@ -459,6 +484,8 @@
       '#fl-ff .cu{padding:28px 24px;text-align:center;border-bottom:.5px solid #efefef}',
       '#fl-ff .cu-t{font-weight:600;font-size:16px;margin-bottom:4px;color:#1f9d55}',
       '#fl-ff .cu-ic{display:block;width:56px;height:56px;margin:0 auto 10px}',
+      '#fl-ff .cu-st{margin-top:14px;font-size:16px;font-weight:600;color:#000}',
+      '#fl-ff .cu-st:empty{display:none}',
       '#fl-ff .cu-s button{all:unset;cursor:pointer;display:block;margin:10px auto 0;color:#0095f6;font-weight:600}',
       '#fl-ff .cu-s{color:#737373;font-size:14px;line-height:1.4}',
       '#fl-ff .end{padding:28px 24px 40px;text-align:center;color:#737373;font-size:15px;line-height:1.4}',
@@ -1014,7 +1041,9 @@
     return { mode: mode, shown: {}, cards: 0, next: '', more: true, started: false, loading: false, error: false, emptyRun: 0,
       counted: {}, seenRun: 0, caughtUp: false, showSeen: false, held: 0,
       // Friends, once caught up: earlier posts you've seen but not liked, from the ranked feed.
-      unliked: false, r: { next: '', more: true, started: false } };
+      unliked: false, r: { next: '', more: true, started: false },
+      // Following, once caught up: the posts you've seen but not liked, under the same divider.
+      earlier: false, collapsed: false };
   }
 
   // Posts you have looked at (on screen for about a second), so a reload shows what's new.
@@ -1086,7 +1115,9 @@
         var already = wasSeen(m) && !ff.shown[m.code];
         if (already) keptSeen++;
         if (ff.shown[m.code]) continue;
-        if (already && !ff.showSeen) { ff.held++; continue; }
+        if (already && (!ff.showSeen || ff.collapsed)) { ff.held++; continue; }
+        // Following's earlier posts: the ones you haven't liked (as in Friends).
+        if (already && ff.earlier && m.has_liked) continue;
         ff.shown[m.code] = 1;
         if (!window.__flFirstCard) window.__flFirstCard = Math.round(performance.now());
         var c = card(m);
@@ -1113,6 +1144,17 @@
     return added;
   }
 
+  // "Stories: 12/80 seen" under "You're all caught up" (the count comes from the story row,
+  // through the app).
+  window.__flSetStoryCount = function (text) {
+    window.__flStoryCount = text;
+    var els = document.querySelectorAll('#fl-ff .cu-st');
+    for (var i = 0; i < els.length; i++) els[i].textContent = text;
+  };
+  function storyCountEl() {
+    return el('div', 'cu-st', window.__flStoryCount || '');
+  }
+
   // The green check over "You're all caught up" (a ring with a tick, like Instagram's).
   function cuMark() {
     var d = document.createElement('div');
@@ -1128,25 +1170,42 @@
     ff.unliked = true;
     ff.caughtUp = false;
     ff.emptyRun = 0;
+    caughtUpDivider(list, 'from your friends');
+  }
+
+  // Following, after "You're all caught up": the seen posts from the Following feed itself
+  // (newest first), minus the ones you've liked.
+  function startEarlier(list) {
+    ff.earlier = true;
+    ff.showSeen = true;
+    ff.caughtUp = false;
+    ff.seenRun = 0;
+    ff.emptyRun = 0;
+    ff.counted = {};
+    caughtUpDivider(list, '');
+  }
+
+  function caughtUpDivider(list, from) {
     // At the top (nothing new above it, as after a refresh or reopening the app): keep the
     // earlier posts folded away until "View earlier posts".
     ff.collapsed = ff.cards === 0;
     var d = el('div', 'cu');
     d.appendChild(cuMark());
     d.appendChild(el('div', 'cu-t', "You're all caught up"));
-    var sub = el('div', 'cu-s', ff.collapsed ? "You've seen the new posts from your friends." :
-      "You've seen the new posts from your friends. Here are earlier ones you haven't liked yet.");
+    var seenText = "You've seen the new posts" + (from ? ' ' + from : '') + '.';
+    var sub = el('div', 'cu-s', ff.collapsed ? seenText : seenText + " Here are earlier ones you haven't liked yet.");
     if (ff.collapsed) {
       var open = el('button', '', 'View earlier posts');
       open.type = 'button';
       open.addEventListener('click', function () {
         ff.collapsed = false;
-        sub.textContent = "Here are earlier posts from your friends you haven't liked yet.";
+        sub.textContent = "Here are earlier posts" + (from ? ' ' + from : '') + " you haven't liked yet.";
         queue();
       });
       sub.appendChild(open);
     }
     d.appendChild(sub);
+    d.appendChild(storyCountEl());
     list.appendChild(d);
   }
 
@@ -1246,7 +1305,11 @@
     var end = box.querySelector('.end');
     end.textContent = '';
     var hasTpl = !!(window.__flFeed && window.__flFeed.template);
-    if (ff.unliked && ff.collapsed) return;
+    if ((ff.unliked || ff.earlier) && ff.collapsed) return;
+    if (ff.earlier && !ff.error) {
+      end.textContent = ff.more ? 'Loading more…' : "That's everything for now.";
+      return;
+    }
     if (ff.unliked && !ff.error) {
       end.textContent = ff.r.more || !ff.r.started ? 'Loading more…' : "That's everything for now.";
       return;
@@ -1270,8 +1333,9 @@
         queue();
       });
       end.appendChild(more);
+      end.appendChild(storyCountEl());
     } else if (!ff.more && hasTpl) {
-      if (ff.cards) { end.appendChild(cuMark()); end.appendChild(el('div', 'cu-t', "You're all caught up")); }
+      if (ff.cards) { end.appendChild(cuMark()); end.appendChild(el('div', 'cu-t', "You're all caught up")); end.appendChild(storyCountEl()); }
       else end.textContent = cfg.none;
     } else if (!ff.cards) {
       end.textContent = cfg.looking;
@@ -1380,6 +1444,10 @@
     if (added) ff.emptyRun = 0;
     // Friends: once caught up (or at the end of the feed), carry on with seen, unliked posts.
     if (mode === 'friends' && !ff.unliked && ff.started && (ff.caughtUp || !ff.more)) startUnliked(list);
+    if (mode === 'following' && !ff.earlier && ff.started && (ff.caughtUp || !ff.more) && ff.held > 0) {
+      startEarlier(list);
+      drawPages(list);
+    }
     if (ff.unliked && !ff.collapsed && drawUnliked(list)) ff.emptyRun = 0;
 
     // Load the next page when fewer than two screens of posts are left below.
@@ -1388,7 +1456,7 @@
     // A run of pages with nothing to keep: keep going, but stop after 15 until you scroll.
     var source = ff.unliked ? 'home' : FEEDS[mode].source;
     var nextCursor = ff.unliked ? (ff.r.started ? ff.r.next : '') : (ff.started ? ff.next : '');
-    var hasMore = ff.unliked ? (ff.r.more && !ff.collapsed) : (ff.more && !ff.caughtUp);
+    var hasMore = ff.unliked ? (ff.r.more && !ff.collapsed) : (ff.more && !ff.caughtUp && !(ff.earlier && ff.collapsed));
     if (near && hasMore && typeof nextCursor === 'string' && !ff.loading && !ff.error && ff.emptyRun < 15 && ready) {
       ff.loading = true;
       var state = ff;
@@ -1469,6 +1537,36 @@
     }
   }
 
+  // The heart (Notifications) at the top of Home: Safari treats the first tap on it as a hover
+  // and drops the click, so a tap opens it directly.
+  var tapStart = null;
+  document.addEventListener('touchstart', function (e) {
+    var t = e.touches && e.touches[0];
+    tapStart = t ? { x: t.clientX, y: t.clientY } : null;
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a[href="/notifications/"]');
+    var t = e.changedTouches && e.changedTouches[0];
+    if (!a || !tapStart || !t || Math.abs(t.clientX - tapStart.x) > 10 || Math.abs(t.clientY - tapStart.y) > 10) return;
+    e.preventDefault();
+    a.click();
+  }, true);
+
+  // Ads between people's stories: skip them (tap "Next" as soon as one shows).
+  var lastAdSkip = 0;
+  function storyAdStep() {
+    if (!/^\/stories\//.test(location.pathname) || Date.now() - lastAdSkip < 800) return;
+    var header = document.querySelector('section') || document.body;
+    var texts = leafTexts(header, 80);
+    var ad = texts.some(function (p) { return p[0] === 'Sponsored' && p[1].getBoundingClientRect().top < window.innerHeight / 3; });
+    if (!ad) return;
+    var next = document.querySelector('svg[aria-label="Next"]');
+    var btn = next && (next.closest('[role="button"],button') || next.parentElement);
+    if (!btn) return;
+    lastAdSkip = Date.now();
+    btn.click();
+  }
+
   /* ---------- run ---------- */
   var queued = false;
   function tick() {
@@ -1489,8 +1587,44 @@
     saveStep();
     shareAppsStep();
     noRepostStep();
+    storyAdStep();
     // The app's feed is in place (or this isn't the Home feed): show the page.
-    document.documentElement.classList.remove('fl-early');
+    if (!feedCoverNeeded()) document.documentElement.classList.remove('fl-early');
+  }
+
+  // Coming back to the Home feed inside the page (back from Notifications, say): Instagram
+  // draws its own home page (a reel, its own tab bar) for a moment before the app's feed is
+  // back. Keep the page hidden from the moment the address changes until it is.
+  function feedCoverNeeded() {
+    if (TAB !== 'home' || !onFollowingFeed() || !signedIn()) return false;
+    var box = document.getElementById(FF_ID), main = document.querySelector('main');
+    return !(box && main && main.contains(box));
+  }
+  var coverTimer = 0;
+  function coverFeed() {
+    if (!feedCoverNeeded()) return;
+    if (!document.getElementById('fl-cover-style')) {
+      var cs = document.createElement('style');
+      cs.id = 'fl-cover-style';
+      cs.textContent = 'html.fl-early body{opacity:0 !important}';
+      (document.head || document.documentElement).appendChild(cs);
+    }
+    document.documentElement.classList.add('fl-early');
+    clearTimeout(coverTimer);
+    // Never stay hidden.
+    coverTimer = setTimeout(function () { document.documentElement.classList.remove('fl-early'); }, 2500);
+    queue();
+  }
+  if (TAB === 'home') {
+    ['pushState', 'replaceState'].forEach(function (name) {
+      var orig = history[name];
+      history[name] = function () {
+        var r = orig.apply(this, arguments);
+        try { coverFeed(); } catch (e) {}
+        return r;
+      };
+    });
+    window.addEventListener('popstate', function () { try { coverFeed(); } catch (e) {} }, true);
   }
   function queue() {
     if (queued) return;
