@@ -182,6 +182,6 @@ struct RefreshBanner: View {
         .padding(.top, 4)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
-        .background(Color.orange.ignoresSafeArea(edges: .top))
+        .background(RefreshGuideView.instagramPurple.ignoresSafeArea(edges: .top)) // Instagram purple, #833AB4
     }
 }
