@@ -390,6 +390,62 @@
     }
     drawOffline();
     grayRings();
+    offlineRow();
+  }
+  // Offline: the app's own copy of the story row (Instagram's only shows a few people at a
+  // time and can't be reordered): people with saved stories first, in the usual order, then
+  // everyone with only videos (not saved), dimmed. Tapping someone saved opens the viewer.
+  function offlineRow() {
+    var row = document.getElementById('fl-offrow');
+    var st = offlineState;
+    var show = TAB === 'stories' && location.pathname === '/' && st.offline && (st.users || []).length > 0;
+    if (!show) { if (row) row.remove(); return; }
+    var me = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || '';
+    var tray = (window.__flTray || []).filter(function (r) { return String((r.user || {}).pk) !== me; });
+    var saved = st.users || [], watched = st.watched || [];
+    var people = [];
+    // Saved and not yet watched, then saved and watched (as Instagram moves seen ones back),
+    // then video-only.
+    var savedUsers = [];
+    tray.forEach(function (r) { var u = r.user || {}; if (saved.indexOf(u.username) !== -1) savedUsers.push(u); });
+    saved.forEach(function (n) { if (!savedUsers.some(function (u) { return u.username === n; })) savedUsers.push({ username: n }); });
+    savedUsers.forEach(function (u) { if (watched.indexOf(u.username) === -1) people.push(u); });
+    savedUsers.forEach(function (u) { if (watched.indexOf(u.username) !== -1) people.push(u); });
+    tray.forEach(function (r) { var u = r.user || {}; if (saved.indexOf(u.username) === -1) people.push(u); });
+    var key = JSON.stringify([saved, watched, people.length]);
+    if (row && row.__key === key) return;
+    if (!row) {
+      row = document.createElement('div');
+      row.id = 'fl-offrow';
+      row.style.cssText = 'position:absolute;left:0;top:24px;width:100%;height:124px;z-index:4;display:flex;overflow-x:auto;overflow-y:hidden;' +
+        'padding-left:9px;box-sizing:border-box;-webkit-overflow-scrolling:touch;scrollbar-width:none;background:' + (getComputedStyle(document.body).backgroundColor || '#fff');
+      document.body.appendChild(row);
+    }
+    row.__key = key;
+    row.innerHTML = '';
+    people.forEach(function (u) {
+      var has = saved.indexOf(u.username) !== -1, done = watched.indexOf(u.username) !== -1;
+      var it = document.createElement('div');
+      it.className = 'fl-offitem';
+      it.style.cssText = 'flex:none;width:102px;display:flex;flex-direction:column;align-items:center;padding-top:5px;' + (has ? '' : 'opacity:.35;');
+      var ring = document.createElement('div');
+      ring.style.cssText = 'width:89px;height:89px;border-radius:50%;box-sizing:border-box;padding:' + (has && !done ? '3px' : '2px') + ';background:' +
+        (has && !done ? 'linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5)' : '#c7c7c7');
+      var inner = document.createElement('div');
+      inner.style.cssText = 'width:100%;height:100%;border-radius:50%;padding:3px;box-sizing:border-box;background:' + row.style.background;
+      var img = document.createElement('div');
+      img.style.cssText = 'width:100%;height:100%;border-radius:50%;background:#dbdbdb center/cover no-repeat' +
+        (u.profile_pic_url ? ';background-image:url("' + u.profile_pic_url + '")' : '');
+      inner.appendChild(img);
+      ring.appendChild(inner);
+      it.appendChild(ring);
+      var name = document.createElement('div');
+      name.textContent = (has ? '' : '▶︎ ') + (u.username || '');
+      name.style.cssText = 'margin-top:6px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/16px -apple-system,system-ui,sans-serif;color:var(--fl-strong)';
+      it.appendChild(name);
+      if (has) it.__flTap = function () { post({ type: 'openOffline', value: u.username }); };
+      row.appendChild(it);
+    });
   }
   function drawOffline() {
     var v = document.getElementById('fl-offline');
@@ -422,6 +478,7 @@
     grayRings();
     // Stories watched offline count as seen in "x/y stories seen" right away.
     if (stripBox) reportStripHeight(stripBox);
+    offlineRow();
   };
   // Instagram's own viewer moves from person to person without loading a page: note each one
   // the moment it opens, so the count is right as soon as the viewer closes.
@@ -2214,7 +2271,7 @@
     ownTapStart = t ? { x: t.clientX, y: t.clientY } : null;
   }, { capture: true, passive: true });
   document.addEventListener('touchend', function (e) {
-    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-info, #fl-speed, .fl-mute-row, #fl-confirm button, #fl-offline .btn');
+    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-info, #fl-speed, .fl-mute-row, #fl-confirm button, #fl-offline .btn, .fl-offitem');
     var t = e.changedTouches && e.changedTouches[0];
     if (!b || !ownTapStart || !t || Math.abs(t.clientX - ownTapStart.x) > 10 || Math.abs(t.clientY - ownTapStart.y) > 10) return;
     e.preventDefault();
