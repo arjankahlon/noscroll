@@ -67,14 +67,22 @@ final class AppSettings: ObservableObject {
     @Published var defaultFeed: String { didSet { save() } }
     @Published private(set) var switches: [String: Bool]
 
-    /// Accounts muted from this app (a post's menu, or a profile's menu), for Muted accounts.
+    /// Muted accounts, as Instagram has them (MutedSync), plus any muted from this app since.
     struct MutedAccount: Codable, Identifiable, Equatable {
         let id: String
         var username: String
+        /// "Posts muted", "Story muted", or both, as Instagram puts it.
+        var what: String? = nil
     }
     @Published private(set) var mutedAccounts: [MutedAccount] = []
     /// Unmutes an account through Instagram (set by the app: it runs in the Home page).
     var unmuter: ((String) async -> Bool)?
+
+    /// Instagram's own list (from MutedSync) replaces what's here.
+    func replaceMuted(_ list: [MutedAccount]) {
+        mutedAccounts = list
+        if let data = try? JSONEncoder().encode(mutedAccounts) { d.set(data, forKey: "settings.mutedAccounts") }
+    }
 
     func setMuted(id: String, username: String, muted: Bool) {
         mutedAccounts.removeAll { $0.id == id }
@@ -280,6 +288,7 @@ struct SettingsView: View {
 /// stories).
 struct MutedAccountsView: View {
     @ObservedObject var settings = AppSettings.shared
+    @ObservedObject private var sync = MutedSync.shared
     @State private var busy: Set<String> = []
     @State private var failed: Set<String> = []
 
@@ -300,9 +309,12 @@ struct MutedAccountsView: View {
                 Text("No muted accounts. Mute someone from the menu on their post, or the ... menu on their profile.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(settings.mutedAccounts) { account in
+            ForEach(settings.mutedAccounts, id: \.username) { account in
                 HStack {
-                    Text("@" + account.username)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("@" + account.username)
+                        if let what = account.what { Text(what).font(.footnote).foregroundStyle(.secondary) }
+                    }
                     Spacer()
                     if busy.contains(account.id) {
                         ProgressView()
@@ -316,6 +328,11 @@ struct MutedAccountsView: View {
         }
         .navigationTitle("Muted accounts")
         .navigationBarTitleDisplayMode(.inline)
+        // Always Instagram's real list: muted in the Instagram app or on another phone too.
+        .task { await MutedSync.shared.refresh(force: true) }
+        .toolbar {
+            if sync.syncing { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
+        }
         .followsLook()
     }
 

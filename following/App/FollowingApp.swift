@@ -200,6 +200,8 @@ struct RootTabs: View {
         }
         .onAppear {
             settings.unmuter = { [weak tabs] id in await tabs?.unmute(id) ?? false }
+            // Muted accounts: match Instagram's list (after the feed has had time to load).
+            Task { try? await Task.sleep(nanoseconds: 25_000_000_000); await MutedSync.shared.refresh() }
             stories.bannerShown = reminder.show
             stories.attach(home: tabs.controller(for: .home), strip: tabs.controller(for: .stories))
         }
