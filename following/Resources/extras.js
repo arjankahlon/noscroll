@@ -362,8 +362,10 @@
   // alone), so they can be watched without signal. The app draws its progress here
   // (window.__flOfflineState); offline, tapping someone with saved stories opens the app's viewer.
   var offlineState = { phase: 'idle', saved: 0, offline: false, users: [] };
-  var ICON_DOWN = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>';
-  var ICON_SAVED = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>';
+  // A cloud with a download arrow (like the App Store's download icon), and once saved, the
+  // download arrow in a circle.
+  var ICON_DOWN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 18.5H6.8a4.3 4.3 0 0 1-.6-8.56A6 6 0 0 1 17.8 8.6a4.95 4.95 0 0 1-.3 9.9h-1"/><path d="M12 11v9M9 17l3 3 3-3"/></svg>';
+  var ICON_SAVED = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 7v9M8.5 12.5 12 16l3.5-3.5"/></svg>';
   var ICON_OFF = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.8a15 15 0 0 1 4.2-2.7M9.5 5.2A15 15 0 0 1 22 8.8M5 12.5a10 10 0 0 1 5-2.6M14.5 10.2a10 10 0 0 1 4.5 2.3M8.5 16a5 5 0 0 1 7 0M12 20h.01M3 3l18 18"/></svg>';
   function offlineButton() {
     var v = document.getElementById('fl-offline');
@@ -383,7 +385,7 @@
       bar.className = 'bar';
       bar.style.cssText = 'position:absolute;right:0;top:23px;width:100%;height:3px;border-radius:2px;background:rgba(127,127,127,.25);overflow:hidden;display:none';
       var fill = document.createElement('div');
-      fill.style.cssText = 'height:100%;width:0;background:#833ab4;border-radius:2px;transition:width .2s';
+      fill.style.cssText = 'height:100%;width:0;background:#0095f6;border-radius:2px;transition:width .2s';
       bar.appendChild(fill);
       v.appendChild(bar);
       document.body.appendChild(v);
@@ -473,7 +475,7 @@
       html = ICON_SAVED + '<span>' + n + ' available offline</span>';
       color = '#1f9d55';
     } else {
-      html = ICON_DOWN + '<span>Load all stories</span>';
+      html = ICON_DOWN + '<span>Load offline stories</span>';
     }
     if (b.__html !== html) { b.innerHTML = html; b.__html = html; }
     b.style.color = color;

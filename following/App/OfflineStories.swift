@@ -138,13 +138,30 @@ final class OfflineStories: ObservableObject {
 
     /// The button above the story row. Offline: open the saved stories. Online: load (again,
     /// for anything new since last time).
+    /// The button above the story row. Offline: open the saved stories. Online with stories
+    /// saved ("62 available offline"): clear them. Otherwise: load them.
     func buttonTapped() {
         if case .loading = phase { return }
         if offline {
             if savedCount > 0 { viewerStart = reels.first?.username }
             return
         }
+        if savedCount > 0 { clearAll(); return }
         Task { await load() }
+    }
+
+    /// Delete every saved story, except ones watched offline that Instagram hasn't heard about
+    /// yet (they go once they're sent).
+    func clearAll() {
+        let waiting = Set(pending.map(\.mediaId))
+        for i in reels.indices {
+            for item in reels[i].items where !waiting.contains(item.pk) { remove(item.file) }
+            reels[i].items.removeAll { !waiting.contains($0.pk) }
+        }
+        dropEmptyReels()
+        saveManifest()
+        pushState()
+        sync()
     }
 
     func load() async {
