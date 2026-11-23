@@ -293,7 +293,7 @@
     stripBox = null;
     var c = document.getElementById('fl-story-count');
     if (c) c.remove();
-    var v = document.getElementById('fl-version');
+    var v = document.getElementById('fl-offline');
     if (v) v.remove();
   }
 
@@ -358,10 +358,118 @@
     reportStripHeight(box);
   }
 
+  // Load all stories: the app downloads every photo story you haven't watched (videos are left
+  // alone), so they can be watched without signal. The app draws its progress here
+  // (window.__flOfflineState); offline, tapping someone with saved stories opens the app's viewer.
+  var offlineState = { phase: 'idle', saved: 0, offline: false, users: [] };
+  var ICON_DOWN = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>';
+  var ICON_SAVED = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>';
+  var ICON_OFF = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.8a15 15 0 0 1 4.2-2.7M9.5 5.2A15 15 0 0 1 22 8.8M5 12.5a10 10 0 0 1 5-2.6M14.5 10.2a10 10 0 0 1 4.5 2.3M8.5 16a5 5 0 0 1 7 0M12 20h.01M3 3l18 18"/></svg>';
+  function offlineButton() {
+    var v = document.getElementById('fl-offline');
+    if (!v) {
+      v = document.createElement('div');
+      v.id = 'fl-offline';
+      v.style.cssText = 'position:absolute;top:0;right:14px;z-index:5;display:flex;align-items:center;gap:7px;font:600 15px/22px -apple-system,system-ui,sans-serif;color:var(--fl-strong);pointer-events:none';
+      var b = document.createElement('span');
+      b.className = 'btn';
+      b.setAttribute('role', 'button');
+      b.style.cssText = 'pointer-events:auto;display:inline-flex;align-items:center;gap:5px;cursor:pointer;-webkit-tap-highlight-color:transparent';
+      b.__flTap = function () { post({ type: 'offlineTap' }); };
+      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); b.__flTap(); });
+      v.appendChild(b);
+      // The download's progress: a thin bar under the button, only while loading.
+      var bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.cssText = 'position:absolute;right:0;top:23px;width:100%;height:3px;border-radius:2px;background:rgba(127,127,127,.25);overflow:hidden;display:none';
+      var fill = document.createElement('div');
+      fill.style.cssText = 'height:100%;width:0;background:#833ab4;border-radius:2px;transition:width .2s';
+      bar.appendChild(fill);
+      v.appendChild(bar);
+      document.body.appendChild(v);
+    }
+    drawOffline();
+  }
+  function drawOffline() {
+    var v = document.getElementById('fl-offline');
+    if (!v) return;
+    var b = v.querySelector('.btn'), bar = v.querySelector('.bar'), st = offlineState, html, color = '';
+    var n = st.saved || 0;
+    if (st.phase === 'loading') {
+      html = ICON_DOWN + '<span>' + (st.total ? 'Loading ' + st.done + ' of ' + st.total : 'Finding stories…') + '</span>';
+    } else if (st.phase === 'failed') {
+      html = ICON_DOWN + '<span>' + (st.message || "Couldn't load") + '</span>';
+      color = '#ed4956';
+    } else if (st.offline) {
+      html = ICON_OFF + '<span>' + (n ? 'Offline · ' + n + ' saved' : 'Offline') + '</span>';
+      color = '#e07a00';
+    } else if (n) {
+      html = ICON_SAVED + '<span>' + n + ' saved</span>';
+      color = '#1f9d55';
+    } else {
+      html = ICON_DOWN + '<span>Load all stories</span>';
+    }
+    if (b.__html !== html) { b.innerHTML = html; b.__html = html; }
+    b.style.color = color;
+    var loading = st.phase === 'loading' && st.total > 0;
+    bar.style.display = loading ? 'block' : 'none';
+    bar.firstChild.style.width = loading ? Math.round(100 * st.done / st.total) + '%' : '0';
+  }
+  window.__flOfflineState = function (st) {
+    offlineState = st || offlineState;
+    drawOffline();
+  };
+  // Offline: tapping someone whose stories are saved opens them in the app's viewer instead of
+  // Instagram's (which can't load without signal).
+  if (TAB === 'stories') {
+    document.addEventListener('click', function (e) {
+      if (!offlineState.offline) return;
+      var s = e.target && e.target.closest && e.target.closest('[role="button"][aria-label^="Story by "]');
+      if (!s) return;
+      var m = /^Story by (.+?), (?:seen|not seen)$/.exec(s.getAttribute('aria-label') || '');
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (m && offlineState.users.indexOf(m[1]) !== -1) post({ type: 'openOffline', value: m[1] });
+    }, true);
+  }
+  // The list for the app to download: everyone in the story row with something you haven't
+  // watched, and their unwatched photo stories (largest size), asked for the way Instagram's own
+  // story viewer asks (it doesn't mark anything as seen).
+  window.__flOfflineList = async function () {
+    var me = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || '';
+    var tray = (window.__flTray || []).filter(function (r) {
+      return String((r.user || {}).pk) !== me && !(r.seen >= r.latest_reel_media);
+    });
+    var out = [];
+    for (var i = 0; i < tray.length; i += 20) {
+      var ids = tray.slice(i, i + 20).map(function (r) { return String(r.id); });
+      var d = await gqlRequest('PolarisStoriesV3ReelPageStandaloneQuery', '39989351314045574', {
+        reel_ids_arr: ids, is_highlight: false, media_id: null,
+        __relay_internal__pv__PolarisCommunityNoteStoriesLabelEnabledrelayprovider: false });
+      var rs = (d.xdt_api__v1__feed__reels_media || {}).reels_media || [];
+      rs.forEach(function (r) {
+        var t = tray.filter(function (x) { return String(x.id) === String(r.id); })[0] || {};
+        var u = r.user && r.user.username ? r.user : (t.user || {});
+        var items = (r.items || []).filter(function (it) { return it.media_type === 1 && !(r.seen >= it.taken_at); })
+          .map(function (it) {
+            var c = ((it.image_versions2 || {}).candidates || [])[0] || {};
+            var mu = ((it.story_music_stickers || [])[0] || {}).music_asset_info;
+            return { id: String(it.id), pk: String(it.pk), takenAt: it.taken_at || 0, expiresAt: it.expiring_at || 0,
+              url: c.url || '', w: c.width || 1080, h: c.height || 1920,
+              music: mu && mu.title ? mu.title + (mu.display_artist ? ' · ' + mu.display_artist : '') : null };
+          }).filter(function (it) { return it.url; });
+        if (items.length) out.push({ reelId: String(r.id), userId: String(u.pk || u.id || r.id), username: u.username || '',
+          pic: u.profile_pic_url || '', items: items });
+      });
+    }
+    return JSON.stringify(out);
+  };
+
   // The app: is the orange banner showing? It has its own (i), so the one here hides.
   window.__flSetBanner = function (on) {
     window.__flBanner = !!on;
-    var i = document.querySelector('#fl-version [role="button"]');
+    var i = document.querySelector('#fl-offline .info');
     if (i) i.style.display = on ? 'none' : 'inline-flex';
   };
 
@@ -401,24 +509,8 @@
       c.style.cssText = 'position:absolute;top:4px;left:14px;z-index:5;font:600 12px/16px -apple-system,system-ui,sans-serif;color:#737373;pointer-events:none';
       document.body.appendChild(c);
     }
-    // And on the right of the same line: which version of the app this is.
-    var v = document.getElementById('fl-version');
-    if (!v && window.__FOLLOWING_VERSION) {
-      v = document.createElement('div');
-      v.id = 'fl-version';
-      v.style.cssText = 'position:absolute;top:1px;right:14px;z-index:5;display:flex;align-items:center;gap:6px;font:700 17px/21px -apple-system,system-ui,sans-serif;color:var(--fl-strong);pointer-events:none';
-      v.appendChild(document.createTextNode('Following v' + window.__FOLLOWING_VERSION));
-      // (i): the app's "How to refresh" page.
-      var info = document.createElement('span');
-      info.textContent = 'i';
-      info.setAttribute('role', 'button');
-      info.setAttribute('aria-label', 'How to refresh');
-      info.style.cssText = 'pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1.8px solid currentColor;border-radius:50%;box-sizing:border-box;font:700 12px/1 Georgia,serif;cursor:pointer';
-      info.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); post({ type: 'showGuide' }); });
-      if (window.__flBanner) info.style.display = 'none';
-      v.appendChild(info);
-      document.body.appendChild(v);
-    }
+    // And on the right of the same line: Load all stories (for a stretch without signal).
+    offlineButton();
     var text = S('storyCount') ? seenN + '/' + total + ' stories seen' : '';
     c.style.display = text ? '' : 'none';
     if (c.textContent !== text) {
@@ -770,6 +862,32 @@
 
   // Debugging: lets a developer try the like request from the Mac (following/ev.sh).
   window.__flLikeRequest = likeRequest;
+
+  // Any of Instagram's own GraphQL requests, sent the way its pages send them (used for the
+  // offline stories: loading them, and later telling Instagram which ones you watched).
+  function gqlRequest(name, doc, variables) {
+    var session = freshSession();
+    if (!session || !session.fb_dtsg) return Promise.reject(new Error('no session'));
+    var params = new URLSearchParams();
+    for (var k in session) params.set(k, session[k]);
+    params.set('fb_api_caller_class', 'RelayModern');
+    params.set('fb_api_req_friendly_name', name);
+    params.set('variables', JSON.stringify(variables));
+    params.set('server_timestamps', 'true');
+    params.set('doc_id', doc);
+    var headers = { 'content-type': 'application/x-www-form-urlencoded', 'x-fb-friendly-name': name,
+      'x-csrftoken': cookie('csrftoken'), 'x-ig-app-id': '1217981644879628', 'x-asbd-id': '359341' };
+    if (session.lsd) headers['x-fb-lsd'] = session.lsd;
+    return (window.__flFetch || fetch)('/api/graphql', { method: 'POST', credentials: 'include', headers: headers, body: params.toString() })
+      .then(function (r) { return r.text().then(function (t) { return { ok: r.ok, text: t }; }); })
+      .then(function (res) {
+        var j = null;
+        try { j = JSON.parse(res.text.replace(/^for \(;;\);/, '').split('\n')[0]); } catch (e) {}
+        if (!res.ok || !j || j.errors || !j.data) throw new Error(res.text.slice(0, 200));
+        return j.data;
+      });
+  }
+  window.__flGql = gqlRequest;
 
   // Bios (for the Friends feed). The feeds' posts don't carry them, so the app asks Instagram the
   // way its own profile page does (PolarisProfilePageContentQuery, learned by privacy-hook.js;
@@ -2018,7 +2136,8 @@
         return (b.textContent || '').trim() === 'Edit profile';
       });
     var btn = document.getElementById('fl-settings');
-    if (!own) { if (btn) btn.remove(); return; }
+    var info = document.getElementById('fl-info');
+    if (!own) { if (btn) btn.remove(); if (info) info.remove(); return; }
     if (btn) return;
     // Level with the settings gear in the top left.
     var gear = document.querySelector('svg[aria-label="Options"], svg[aria-label="Settings"]');
@@ -2033,6 +2152,16 @@
       '<stop offset="0" stop-color="#6A36C2"/><stop offset=".3" stop-color="#B22FA8"/><stop offset=".55" stop-color="#E1306C"/><stop offset=".8" stop-color="#F77737"/><stop offset="1" stop-color="#FCB045"/></linearGradient></defs>' +
       '<rect width="28" height="28" rx="7" fill="url(#flg)"/><g fill="#fff"><rect x="6.4" y="9.2" width="13.7" height="1.9" rx=".95"/><rect x="6.4" y="13.1" width="13.7" height="1.9" rx=".95"/><rect x="6.4" y="17" width="8.8" height="1.9" rx=".95"/></g></svg>';
     document.body.appendChild(btn);
+    // To its left, (i): the app's "How to refresh" page.
+    info = document.createElement('button');
+    info.id = 'fl-info';
+    info.type = 'button';
+    info.setAttribute('aria-label', 'How to refresh');
+    info.textContent = 'i';
+    info.style.cssText = 'all:unset;position:absolute;right:56px;width:22px;height:22px;z-index:2147483000;display:flex;align-items:center;justify-content:center;' +
+      'border:2px solid var(--fl-strong);border-radius:50%;box-sizing:border-box;color:var(--fl-strong);font:700 13px/1 Georgia,serif;cursor:pointer;-webkit-tap-highlight-color:transparent;top:' +
+      (parseInt(btn.style.top, 10) + 3) + 'px';
+    document.body.appendChild(info);
   }
 
   // The Messages list: no back arrow (it led somewhere odd).
@@ -2051,12 +2180,13 @@
     ownTapStart = t ? { x: t.clientX, y: t.clientY } : null;
   }, { capture: true, passive: true });
   document.addEventListener('touchend', function (e) {
-    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-speed, .fl-mute-row, #fl-confirm button');
+    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-info, #fl-speed, .fl-mute-row, #fl-confirm button, #fl-offline .btn');
     var t = e.changedTouches && e.changedTouches[0];
     if (!b || !ownTapStart || !t || Math.abs(t.clientX - ownTapStart.x) > 10 || Math.abs(t.clientY - ownTapStart.y) > 10) return;
     e.preventDefault();
     e.stopPropagation();
     if (b.id === 'fl-settings') post({ type: 'showSettings' });
+    else if (b.id === 'fl-info') post({ type: 'showGuide' });
     else if (b.classList.contains('fl-mute-row')) b.__flTap();
     else if (b.__flTap) b.__flTap(e);
   }, true);

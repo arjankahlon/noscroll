@@ -89,6 +89,7 @@ struct RootTabs: View {
     @ObservedObject private var guide = Guide.shared
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var settingsPane = SettingsPane.shared
+    @ObservedObject private var offlineStories = OfflineStories.shared
     @ObservedObject private var profilePic = ProfilePic.shared
 
     /// Icons only, no labels. Profile shows your own picture once the app has it.
@@ -123,6 +124,12 @@ struct RootTabs: View {
             tabs.applySettings()
             reminder.update()
         }) { SettingsView() }
+        // Saved stories, watched offline (Load all stories, above the story row).
+        .fullScreenCover(isPresented: Binding(get: { offlineStories.viewerStart != nil },
+                                              set: { if !$0 { offlineStories.viewerStart = nil } }),
+                         onDismiss: { offlineStories.viewerClosed() }) {
+            OfflineStoryViewer(reels: offlineStories.reel(startingAt: offlineStories.viewerStart))
+        }
         // Grayscale and Appearance: everything, tab bar and banners included, at once.
         .followsLook()
     }

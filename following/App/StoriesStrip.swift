@@ -49,6 +49,8 @@ final class StoriesModel: ObservableObject {
         #endif
         self.home = home
         self.strip = strip
+        OfflineStories.shared.home = home
+        OfflineStories.shared.strip = strip
 
         let sv = strip.webView.scrollView
         sv.isScrollEnabled = false
@@ -64,7 +66,13 @@ final class StoriesModel: ObservableObject {
         }
         strip.onMessage = { [weak self] type, value in
             guard let self else { return }
-            if type == "stripReady" { self.rowReady(); self.pushBanner(); return }
+            if type == "stripReady" { self.rowReady(); self.pushBanner(); OfflineStories.shared.pushState(); return }
+            // Load all stories (the button above the row), and offline, a person's saved stories.
+            if type == "offlineTap" { OfflineStories.shared.buttonTapped(); return }
+            if type == "openOffline", let name = value as? String { OfflineStories.shared.viewerStart = name; return }
+            #if DEBUG
+            if type == "debugOffline", let on = value as? Bool { OfflineStories.shared.forceOffline = on; return }
+            #endif
             // Pulled down on the story row (which keeps the drag): refresh Home, spinner included.
             if type == "pullRefresh" { self.pullRefresh(); return }
             if type == "storyCount", let text = value as? String {
@@ -115,9 +123,12 @@ final class StoriesModel: ObservableObject {
             // is shown full screen.
             let open = !(wv.url?.path == "/" || wv.url?.path.isEmpty == true)
             let story = wv.url?.path.hasPrefix("/stories/") ?? false
+            // Opened someone's stories in Instagram's own viewer: their saved copies can go.
+            let storyUser = story ? wv.url?.pathComponents.dropFirst(2).first : nil
             Task { @MainActor in
                 guard let self else { return }
                 if self.onStoryPage != story { self.onStoryPage = story }
+                if let u = storyUser, u != "highlights", !OfflineStories.shared.offline { OfflineStories.shared.openedOnline(username: u) }
                 // Still on the row while a tapped post or profile starts loading: stay open.
                 if self.opening && !open { return }
                 guard self.expanded != open else { return }
