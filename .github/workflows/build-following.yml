@@ -44,7 +44,7 @@ jobs:
           # series (say 1.3), set SERIES="1.3" and BASE to the next build's number. The build
           # number (CFBundleVersion, buildVersion in source.json) keeps counting up regardless:
           # SideStore and the app's update banner compare that.
-          SERIES="1.2"; BASE=14
+          SERIES="1.2"; BASE=15
           N=$((GITHUB_RUN_NUMBER - BASE))
           if [ "$N" -le 0 ]; then VERSION="$SERIES"; else VERSION="$SERIES.$N"; fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
