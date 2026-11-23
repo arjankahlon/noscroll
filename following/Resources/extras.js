@@ -915,6 +915,7 @@
       btn.setAttribute('aria-label', liked ? 'Unlike' : 'Like');
     };
     setUi(want);
+    if (want) post({ type: 'haptic', value: 'like' });   // the app checks "Haptic on likes"
     if (typeof m.like_count === 'number') { m.like_count += want ? 1 : -1; label(); }
     likeRequest(want ? 'like' : 'unlike', m).catch(function (err) {
       try { window.__flLikeError = String(err && err.message || err); } catch (e) {}
@@ -2035,7 +2036,7 @@
     ownTapStart = t ? { x: t.clientX, y: t.clientY } : null;
   }, { capture: true, passive: true });
   document.addEventListener('touchend', function (e) {
-    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-speed, .fl-mute-row');
+    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-speed, .fl-mute-row, #fl-confirm button');
     var t = e.changedTouches && e.changedTouches[0];
     if (!b || !ownTapStart || !t || Math.abs(t.clientX - ownTapStart.x) > 10 || Math.abs(t.clientY - ownTapStart.y) > 10) return;
     e.preventDefault();
@@ -2043,6 +2044,83 @@
     if (b.id === 'fl-settings') post({ type: 'showSettings' });
     else if (b.classList.contains('fl-mute-row')) b.__flTap();
     else if (b.__flTap) b.__flTap(e);
+  }, true);
+
+  // Likes on Instagram's own pages (a profile's posts, a shared post, a story): a light tap for
+  // each like, and before liking a post over a week old, a warning to confirm it. (The Home feed
+  // is the app's own; its likes tap in toggleLike.)
+  var likeLetThrough = null;
+  function likeButtonOf(t) {
+    var b = t && t.closest && t.closest('[role="button"],button');
+    if (!b || b.closest('#fl-ff, #fl-menu, #fl-confirm')) return null;
+    return b.querySelector('svg[aria-label="Like"]') ? b : null;
+  }
+  // The post's date: the nearest date above the button (each post on the page has its own).
+  function postDateOf(b) {
+    for (var n = b.parentElement; n && n !== document.body; n = n.parentElement) {
+      var t = n.querySelector('time[datetime]');
+      if (t) { var d = new Date(t.getAttribute('datetime')); return isNaN(d) ? null : d; }
+    }
+    return null;
+  }
+  function ageText(ms) {
+    var day = 864e5, n, unit;
+    if (ms >= 365 * day) { n = Math.floor(ms / (365 * day)); unit = 'year'; }
+    else if (ms >= 30 * day) { n = Math.floor(ms / (30 * day)); unit = 'month'; }
+    else { n = Math.floor(ms / (7 * day)); unit = 'week'; }
+    return n + ' ' + unit + (n === 1 ? '' : 's');
+  }
+  function confirmOldLike(b, age) {
+    var old = document.getElementById('fl-confirm');
+    if (old) old.remove();
+    var box = el('div');
+    box.id = 'fl-confirm';
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'msg', 'This post is ' + ageText(age) + ' old. Are you sure you want to like it?'));
+    var close = function () { box.classList.remove('on'); setTimeout(function () { box.remove(); }, 180); };
+    var like = el('button', 'like', 'Like');
+    var cancel = el('button', 'cancel', 'Cancel');
+    like.__flTap = function () { close(); likeLetThrough = b; b.click(); };
+    cancel.__flTap = close;
+    like.onclick = like.__flTap;
+    cancel.onclick = cancel.__flTap;
+    card.appendChild(like);
+    card.appendChild(cancel);
+    box.appendChild(card);
+    box.addEventListener('click', function (e) { if (e.target === box) close(); });
+    document.body.appendChild(box);
+    requestAnimationFrame(function () { box.classList.add('on'); });
+  }
+  (function () {
+    var st = document.createElement('style');
+    st.textContent = [
+      '#fl-confirm{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .18s}',
+      '#fl-confirm.on{background:rgba(0,0,0,.4)}',
+      '#fl-confirm .card{width:270px;background:var(--fl-sheet,#fff);border-radius:14px;overflow:hidden;text-align:center;font:400 17px/1.3 -apple-system,system-ui,sans-serif;color:var(--fl-strong);transform:scale(1.1);opacity:0;transition:transform .18s,opacity .18s}',
+      '#fl-confirm.on .card{transform:none;opacity:1}',
+      '#fl-confirm .msg{padding:20px 16px 18px;font-size:15px;font-weight:600}',
+      '#fl-confirm button{all:unset;display:block;width:100%;box-sizing:border-box;padding:12px;border-top:.5px solid rgba(127,127,127,.35);cursor:pointer;-webkit-tap-highlight-color:transparent}',
+      '#fl-confirm button:active{background:rgba(127,127,127,.15)}',
+      '#fl-confirm button.like{color:#ed4956}',
+      '#fl-confirm button.cancel{color:#0095f6;font-weight:700}',
+      '@media (prefers-color-scheme: dark){#fl-confirm .card{--fl-sheet:#262626}}'
+    ].join('');
+    (document.head || document.documentElement).appendChild(st);
+  })();
+  document.addEventListener('click', function (e) {
+    var b = likeButtonOf(e.target);
+    if (!b) return;
+    if (likeLetThrough === b) { likeLetThrough = null; post({ type: 'haptic', value: 'like' }); return; }
+    var when = /^\/stories\//.test(location.pathname) ? null : postDateOf(b);
+    var age = when ? Date.now() - when.getTime() : 0;
+    if (age > 7 * 864e5) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      confirmOldLike(b, age);
+      return;
+    }
+    post({ type: 'haptic', value: 'like' });
   }, true);
 
   // 2× speed: a small button over a big playing video (a reel a friend sent, a post's video).

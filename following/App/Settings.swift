@@ -51,6 +51,7 @@ final class AppSettings: ObservableObject {
         ("Haptic Vibrations", [
             Item(key: "hapticTabs", title: "Haptic on tab switch", detail: ""),
             Item(key: "hapticCheck", title: "Haptic on caught-up checkmark", detail: ""),
+            Item(key: "hapticLikes", title: "Haptic on likes", detail: ""),
         ]),
     ]
     // Always on, no switch: the unread chats badge, the 2× speed button, the simpler Share sheet,

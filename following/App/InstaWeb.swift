@@ -197,7 +197,11 @@ final class InstaWebController: NSObject, ObservableObject {
         }
         if type == "haptic" {
             let on = AppSettings.shared
-            if (dict["value"] as? String) == "tap" {
+            if (dict["value"] as? String) == "like" {
+                // Liking a post or a story.
+                guard on.isOn("hapticLikes") else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            } else if (dict["value"] as? String) == "tap" {
                 guard on.isOn("hapticTabs") else { return }
                 // Switching between Friends and Following: the tab bar's light tap.
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
