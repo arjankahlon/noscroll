@@ -213,6 +213,13 @@
           "redirect": "/?variant=following",
           "defaultEnabled": true
         },
+        "use-the-app-banner": {
+          "kind": "style",
+          "label": "Hide the \"Use the app\" banner",
+          "css": "div[data-visualcompletion='ignore'] > ._acc8._abpk, ._acc8._abpk:has(button._aswp) { display: none !important; }",
+          "defaultEnabled": true,
+          "source": "Following: Instagram's \"Use the app\" strip flashed for a moment on every refresh before the page script hid it; this hides it before it's drawn."
+        },
         "threads-links": {
           "kind": "style",
           "label": "Hide Threads links",
