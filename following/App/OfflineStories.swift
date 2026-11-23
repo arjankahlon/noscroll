@@ -485,16 +485,19 @@ struct OfflineStoryViewer: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .top) {
-                Color.black.ignoresSafeArea()
-                if let item, let img = store.image(item.file) {
-                    Image(uiImage: img)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        // The whole screen, so the photo stays put when the keyboard opens.
-                        .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                        .ignoresSafeArea()
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                } else {
+                // The photo sits in the black backdrop, which covers the whole screen and ignores
+                // the keyboard: it stays put while typing, and never pushes the reply box off screen.
+                Color.black
+                    .overlay {
+                        if let item, let img = store.image(item.file) {
+                            Image(uiImage: img)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                    .ignoresSafeArea()
+                if item.map({ store.image($0.file) == nil }) ?? true {
                     Text("This story isn't saved").foregroundStyle(.white.opacity(0.7))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
