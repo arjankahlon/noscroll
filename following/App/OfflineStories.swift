@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Network
 import WebKit
+import BackgroundTasks
 
 /// "Load all stories": for a stretch without signal (the subway).
 ///
@@ -26,6 +27,7 @@ final class OfflineStories: ObservableObject {
         let width: Int
         let height: Int
         let music: String?      // "Song · Artist", shown without audio
+        var liked: Bool?        // already liked when it was loaded
     }
     struct Reel: Codable, Identifiable, Equatable {
         let id: String          // reel id (the owner's id)
@@ -43,6 +45,21 @@ final class OfflineStories: ObservableObject {
         let seenAt: Int
     }
 
+    /// A like or unlike from the offline viewer, sent once back online.
+    struct LikeChange: Codable, Equatable {
+        let pk: String
+        var liked: Bool
+    }
+    /// A reply from the offline viewer: sent as a message to its poster once back online.
+    struct Reply: Codable, Equatable {
+        let id: String
+        let mediaId: String
+        let reelId: String
+        let ownerId: String
+        let text: String
+        let at: Int
+    }
+
     enum Phase: Equatable { case idle, loading(done: Int, total: Int), failed(String) }
 
     @Published private(set) var reels: [Reel] = []
@@ -51,6 +68,10 @@ final class OfflineStories: ObservableObject {
     /// The viewer: which person to start with (nil when closed).
     @Published var viewerStart: String?
     private(set) var pending: [Seen] = []
+    @Published private(set) var likeChanges: [LikeChange] = []
+    @Published private(set) var replies: [Reply] = []
+    var hasPending: Bool { !pending.isEmpty || !likeChanges.isEmpty || !replies.isEmpty }
+    static let refreshTaskId = "com.arjankahlon.following.sync"
 
     weak var strip: InstaWebController?
     weak var home: InstaWebController?
@@ -65,6 +86,8 @@ final class OfflineStories: ObservableObject {
     }()
     private var manifestURL: URL { folder.appendingPathComponent("stories.json") }
     private var pendingURL: URL { folder.appendingPathComponent("seen.json") }
+    private var likesURL: URL { folder.appendingPathComponent("likes.json") }
+    private var repliesURL: URL { folder.appendingPathComponent("replies.json") }
 
     var savedCount: Int { reels.reduce(0) { $0 + $1.items.count } }
 
@@ -82,6 +105,8 @@ final class OfflineStories: ObservableObject {
     private init() {
         if let d = try? Data(contentsOf: manifestURL), let r = try? JSONDecoder().decode([Reel].self, from: d) { reels = r }
         if let d = try? Data(contentsOf: pendingURL), let p = try? JSONDecoder().decode([Seen].self, from: d) { pending = p }
+        if let d = try? Data(contentsOf: likesURL), let p = try? JSONDecoder().decode([LikeChange].self, from: d) { likeChanges = p }
+        if let d = try? Data(contentsOf: repliesURL), let p = try? JSONDecoder().decode([Reply].self, from: d) { replies = p }
         dropExpired()
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
@@ -90,6 +115,11 @@ final class OfflineStories: ObservableObject {
         monitor.start(queue: DispatchQueue(label: "following.offline.path"))
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.dropExpired(); self?.sync() }
+        }
+        // Leaving the app with something still to send: keep going for the time iOS allows, and
+        // ask iOS to wake the app later to finish (phase 4).
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.appBackgrounded() }
         }
     }
 
@@ -140,7 +170,7 @@ final class OfflineStories: ObservableObject {
                 let pk = i["pk"] as? String ?? mid
                 let item = Item(id: mid, pk: pk, takenAt: i["takenAt"] as? Int ?? 0, expiresAt: i["expiresAt"] as? Int ?? 0,
                                 file: "\(pk).jpg", width: i["w"] as? Int ?? 1080, height: i["h"] as? Int ?? 1920,
-                                music: i["music"] as? String)
+                                music: i["music"] as? String, liked: i["liked"] as? Bool)
                 items.append((item, url))
             }
             if items.isEmpty { continue }
@@ -208,6 +238,30 @@ final class OfflineStories: ObservableObject {
 
     func isWatched(_ item: Item) -> Bool { pending.contains { $0.mediaId == item.pk } }
 
+    func isLiked(_ item: Item) -> Bool { likeChanges.first { $0.pk == item.pk }?.liked ?? (item.liked ?? false) }
+
+    /// The heart in the offline viewer: liked (or unliked) now, sent to Instagram once back online.
+    func toggleLike(_ item: Item) {
+        let now = !isLiked(item)
+        likeChanges.removeAll { $0.pk == item.pk }
+        if now != (item.liked ?? false) { likeChanges.append(LikeChange(pk: item.pk, liked: now)) }
+        saveLikes()
+        if now, AppSettings.shared.isOn("hapticLikes") { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        pushState()
+    }
+
+    /// A reply typed in the offline viewer: sent to its poster as a message once back online.
+    func reply(_ text: String, to item: Item, in reel: Reel) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        replies.append(Reply(id: UUID().uuidString, mediaId: item.id, reelId: reel.id, ownerId: reel.userId, text: t,
+                             at: Int(Date().timeIntervalSince1970)))
+        saveReplies()
+        pushState()
+    }
+
+    func replyCount(_ item: Item) -> Int { replies.filter { $0.mediaId == item.id }.count }
+
     /// The viewer closed: if there's signal, send what was watched.
     func viewerClosed() {
         pushState()
@@ -267,38 +321,100 @@ final class OfflineStories: ObservableObject {
 
     // MARK: Syncing
 
-    /// Tell Instagram about stories watched offline, oldest first, the way its own viewer does
-    /// (PolarisStoriesV3SeenMutation), with the time each one was really watched.
-    func sync() {
-        guard !offline, !syncing, !pending.isEmpty, let home else { return }
+    /// Back online: tell Instagram what happened offline, in order: which stories were watched
+    /// (Instagram's own "seen" request, PolarisStoriesV3SeenMutation, with the time each was
+    /// really watched), then likes (usePolarisStoriesV4LikeMutation), then replies (sent as
+    /// messages, IGDirectStoryShareReplyMutation). Anything that fails waits for the next try.
+    func sync() { Task { await syncNow() } }
+
+    func syncNow() async {
+        guard !offline, !syncing, hasPending, home != nil else { return }
         syncing = true
-        Task {
-            defer { syncing = false }
-            while let s = pending.first, !offline {
-                #if DEBUG
-                if dryRunSync {
-                    dryRunLog.append("seen reel=\(s.reelId) media=\(s.mediaId) owner=\(s.ownerId) taken=\(s.takenAt) seenAt=\(s.seenAt)")
-                    pending.removeFirst()
-                    savePending()
-                    synced(s)
-                    continue
-                }
-                #endif
-                let js = """
-                return await window.__flGql('PolarisStoriesV3SeenMutation', '26234228992942885', \
-                {reelId: reelId, reelMediaId: mediaId, reelMediaOwnerId: ownerId, reelMediaTakenAt: takenAt, viewSeenAt: seenAt}).then(function () { return true; })
-                """
-                let ok = (try? await home.webView.callAsyncJavaScript(js, arguments: [
-                    "reelId": s.reelId, "mediaId": s.mediaId, "ownerId": s.ownerId, "takenAt": s.takenAt, "seenAt": s.seenAt,
-                ], contentWorld: .page)) as? Bool == true
-                if !ok { break }   // try again later (next connection, or next time the app opens)
-                pending.removeFirst()
-                savePending()
-                synced(s)
-            }
-            pushState()
-            if pending.isEmpty { strip?.webView.reload() }   // the row shows them as seen
+        defer { syncing = false; pushState() }
+        while let s = pending.first, !offline {
+            let ok = await send("PolarisStoriesV3SeenMutation", "26234228992942885", [
+                "reelId": s.reelId, "reelMediaId": s.mediaId, "reelMediaOwnerId": s.ownerId,
+                "reelMediaTakenAt": s.takenAt, "viewSeenAt": s.seenAt])
+            if !ok { return }   // try again later (next connection, or next time the app opens)
+            pending.removeFirst()
+            savePending()
+            synced(s)
         }
+        while let l = likeChanges.first, !offline {
+            let ok = l.liked
+                ? await send("usePolarisStoriesV4LikeMutationLikeMutation", "26938887309082050", ["input": ["media_id": l.pk]])
+                : await send("usePolarisStoriesV4LikeMutationUnlikeMutation", "26510485515280697", ["input": ["media_id": l.pk]])
+            if !ok { return }
+            likeChanges.removeFirst()
+            saveLikes()
+        }
+        while let r = replies.first, !offline {
+            let otid = String((UInt64(Date().timeIntervalSince1970 * 1000) << 22) | UInt64.random(in: 0..<4_194_304))
+            let ok = await send("IGDirectStoryShareReplyMutation", "29327482173525974", [
+                "data": ["is_shh_mode": false, "media_id": r.mediaId, "reaction_emoji": NSNull(), "reel_id": r.reelId,
+                         "sampled": false, "share_client_context": otid, "text": ["sensitive_string_value": r.text]],
+                "send_data": ["forwarded_from_thread_id": NSNull(), "is_forwarded_from_own_message": NSNull(),
+                              "offline_threading_id": otid, "recipient_users": "[\"\(r.ownerId)\"]", "thread_id": NSNull()]])
+            if !ok { return }
+            replies.removeFirst()
+            saveReplies()
+        }
+        if !hasPending { strip?.webView.reload() }   // the row shows them as seen
+    }
+
+    /// One of Instagram's own requests, sent from the Home page (which has your session).
+    private func send(_ name: String, _ doc: String, _ variables: [String: Any]) async -> Bool {
+        #if DEBUG
+        if dryRunSync {
+            // Simulator testing: nothing is sent, it's only written down.
+            let v = (try? JSONSerialization.data(withJSONObject: variables)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            dryRunLog.append("\(name) \(v)")
+            print("[offline sync, not sent] \(name) \(v)")
+            return true
+        }
+        #endif
+        guard let home, let data = try? JSONSerialization.data(withJSONObject: variables),
+              let json = String(data: data, encoding: .utf8) else { return false }
+        let js = "return await window.__flGql(name, doc, JSON.parse(vars)).then(function () { return true; })"
+        let r = try? await home.webView.callAsyncJavaScript(js, arguments: ["name": name, "doc": doc, "vars": json], contentWorld: .page)
+        return r as? Bool == true
+    }
+
+    // MARK: Background (phase 4)
+
+    /// The app went to the background with something still to send: use the time iOS gives a
+    /// closing app, and ask iOS to wake it later (it decides when) to finish.
+    func appBackgrounded() {
+        guard hasPending else { return }
+        scheduleRefresh()
+        guard !offline else { return }
+        var task: UIBackgroundTaskIdentifier = .invalid
+        task = UIApplication.shared.beginBackgroundTask(withName: "Send offline stories") {
+            UIApplication.shared.endBackgroundTask(task)
+        }
+        Task {
+            await syncNow()
+            UIApplication.shared.endBackgroundTask(task)
+        }
+    }
+
+    func scheduleRefresh() {
+        let req = BGAppRefreshTaskRequest(identifier: Self.refreshTaskId)
+        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        try? BGTaskScheduler.shared.submit(req)
+    }
+
+    /// iOS woke the app in the background: send what's waiting, once the Home page is ready.
+    func backgroundRefresh(_ task: BGAppRefreshTask) async {
+        var done = false
+        task.expirationHandler = { done = true }
+        for _ in 0..<40 where !done {
+            if !offline, let home, (try? await home.webView.evaluateJavaScript("typeof window.__flGql")) as? String == "function" { break }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        if !done { await syncNow() }
+        if hasPending { scheduleRefresh() }
+        task.setTaskCompleted(success: !hasPending)
     }
 
     // MARK: Housekeeping
@@ -320,12 +436,17 @@ final class OfflineStories: ObservableObject {
 
     private func remove(_ file: String) { try? FileManager.default.removeItem(at: folder.appendingPathComponent(file)) }
     private func saveManifest() { if let d = try? JSONEncoder().encode(reels) { try? d.write(to: manifestURL, options: .atomic) } }
+    private func saveLikes() { if let d = try? JSONEncoder().encode(likeChanges) { try? d.write(to: likesURL, options: .atomic) } }
+    private func saveReplies() { if let d = try? JSONEncoder().encode(replies) { try? d.write(to: repliesURL, options: .atomic) } }
     private func savePending() { if let d = try? JSONEncoder().encode(pending) { try? d.write(to: pendingURL, options: .atomic) } }
 
     /// The button above the story row (extras.js draws it from this).
     func pushState() {
-        var state: [String: Any] = ["offline": offline, "saved": savedCount, "pending": pending.count,
-                                    "users": reels.filter { !$0.items.isEmpty }.map(\.username)]
+        let waiting = Set(pending.map(\.mediaId))
+        var state: [String: Any] = ["offline": offline, "saved": savedCount, "pending": pending.count + likeChanges.count + replies.count,
+                                    "users": reels.filter { !$0.items.isEmpty }.map(\.username),
+                                    // Everyone whose saved stories have all been watched: their ring goes gray.
+                                    "watched": reels.filter { r in !r.items.isEmpty && r.items.allSatisfy { waiting.contains($0.pk) } }.map(\.username)]
         switch phase {
         case .idle: state["phase"] = "idle"
         case .loading(let d, let t): state["phase"] = "loading"; state["done"] = d; state["total"] = t
@@ -349,6 +470,9 @@ struct OfflineStoryViewer: View {
     @State private var progress: Double = 0
     @State private var paused = false
     @State private var drag: CGFloat = 0
+    @State private var replyText = ""
+    @State private var note: String?
+    @FocusState private var typing: Bool
     private let duration: Double = 5
     private let tick = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
 
@@ -366,13 +490,26 @@ struct OfflineStoryViewer: View {
                     Image(uiImage: img)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: geo.size.width, height: geo.size.height)
+                        // The whole screen, so the photo stays put when the keyboard opens.
+                        .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                        .ignoresSafeArea()
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 } else {
                     Text("This story isn't saved").foregroundStyle(.white.opacity(0.7))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 header.padding(.horizontal, 10).padding(.top, 6)
+                VStack {
+                    Spacer()
+                    if let note {
+                        Text(note).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(.black.opacity(0.6), in: Capsule())
+                            .padding(.bottom, 8)
+                            .transition(.opacity)
+                    }
+                    bottomBar
+                }
                 // Taps: left third back, the rest forward. Hold to pause.
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle()).frame(width: geo.size.width / 3)
@@ -381,6 +518,7 @@ struct OfflineStoryViewer: View {
                         .onTapGesture { next() }
                 }
                 .padding(.top, 70)
+                .padding(.bottom, 90)
                 .simultaneousGesture(LongPressGesture(minimumDuration: 0.25).onChanged { _ in paused = true }
                     .onEnded { _ in paused = false })
             }
@@ -445,6 +583,47 @@ struct OfflineStoryViewer: View {
                 .shadow(color: .black.opacity(0.4), radius: 3)
             }
         }
+    }
+
+    /// Reply (a message to its poster) and like, both sent once back online.
+    private var bottomBar: some View {
+        HStack(spacing: 14) {
+            HStack {
+                TextField("", text: $replyText, prompt: Text(reel.map { "Reply to \($0.username)…" } ?? "Reply…")
+                    .foregroundStyle(.white.opacity(0.75)))
+                    .focused($typing)
+                    .submitLabel(.send)
+                    .onSubmit { sendReply() }
+                    .foregroundStyle(.white)
+                if typing && !replyText.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Button("Send") { sendReply() }.font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                }
+            }
+            .padding(.horizontal, 16).frame(height: 44)
+            .overlay(Capsule().stroke(.white.opacity(0.6), lineWidth: 1))
+            if let item {
+                Button { store.toggleLike(item) } label: {
+                    Image(systemName: store.isLiked(item) ? "heart.fill" : "heart")
+                        .font(.system(size: 26))
+                        .foregroundStyle(store.isLiked(item) ? Color(red: 1, green: 0.19, blue: 0.25) : .white)
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.bottom, 8)
+        .onChange(of: typing) { _, on in paused = on }
+    }
+
+    private func sendReply() {
+        guard let item, let reel, !replyText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        store.reply(replyText, to: item, in: reel)
+        replyText = ""
+        typing = false
+        show(store.offline ? "Reply will send when you're back online" : "Reply sending…")
+    }
+
+    private func show(_ text: String) {
+        withAnimation { note = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { withAnimation { if note == text { note = nil } } }
     }
 
     private func ago(_ t: Int) -> String {

@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import BackgroundTasks
 
 /// Following: Instagram with four tabs and nothing else.
 ///
@@ -11,6 +12,11 @@ import SwiftUI
 @main
 struct FollowingApp: App {
     init() {
+        // Phase 4 of Load all stories: iOS may wake the app later to send what was done offline.
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: OfflineStories.refreshTaskId, using: nil) { task in
+            guard let task = task as? BGAppRefreshTask else { return }
+            Task { @MainActor in await OfflineStories.shared.backgroundRefresh(task) }
+        }
         // "Playback" audio: video sound plays with the silent switch on, and a video in Picture
         // in Picture keeps playing when you leave the app (with the "audio" background mode).
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)

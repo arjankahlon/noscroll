@@ -389,6 +389,7 @@
       document.body.appendChild(v);
     }
     drawOffline();
+    grayRings();
   }
   function drawOffline() {
     var v = document.getElementById('fl-offline');
@@ -418,7 +419,24 @@
   window.__flOfflineState = function (st) {
     offlineState = st || offlineState;
     drawOffline();
+    grayRings();
   };
+  // Everyone whose saved stories you've all watched offline: their ring goes gray right away
+  // (Instagram's row only learns about it once you're back online).
+  function grayRings() {
+    var done = offlineState.watched || [];
+    [].forEach.call(document.querySelectorAll('[role="button"][aria-label^="Story by "]'), function (b) {
+      var m = /^Story by (.+?), (?:seen|not seen)$/.exec(b.getAttribute('aria-label') || '');
+      var ring = b.querySelector('canvas');
+      if (!m || !ring) return;
+      var gray = done.indexOf(m[1]) !== -1;
+      if (gray !== !!ring.__flGray) {
+        ring.__flGray = gray;
+        if (gray) ring.style.setProperty('filter', 'grayscale(1) opacity(.4)', 'important');
+        else ring.style.removeProperty('filter');
+      }
+    });
+  }
   // Offline: tapping someone whose stories are saved opens them in the app's viewer instead of
   // Instagram's (which can't load without signal).
   if (TAB === 'stories') {
@@ -456,7 +474,7 @@
             var c = ((it.image_versions2 || {}).candidates || [])[0] || {};
             var mu = ((it.story_music_stickers || [])[0] || {}).music_asset_info;
             return { id: String(it.id), pk: String(it.pk), takenAt: it.taken_at || 0, expiresAt: it.expiring_at || 0,
-              url: c.url || '', w: c.width || 1080, h: c.height || 1920,
+              url: c.url || '', w: c.width || 1080, h: c.height || 1920, liked: !!it.has_liked,
               music: mu && mu.title ? mu.title + (mu.display_artist ? ' · ' + mu.display_artist : '') : null };
           }).filter(function (it) { return it.url; });
         if (items.length) out.push({ reelId: String(r.id), userId: String(u.pk || u.id || r.id), username: u.username || '',

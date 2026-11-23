@@ -30,7 +30,8 @@ cat > "$APP/Info.plist" <<'EOF'
 <key>UIDeviceFamily</key><array><integer>1</integer></array>
 <key>UILaunchScreen</key><dict/>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
-<key>UIBackgroundModes</key><array><string>audio</string></array>
+<key>UIBackgroundModes</key><array><string>audio</string><string>fetch</string></array>
+<key>BGTaskSchedulerPermittedIdentifiers</key><array><string>com.arjankahlon.following.sync</string></array>
 </dict></plist>
 EOF
 /usr/libexec/PlistBuddy -c "Merge build/sim/partial.plist" "$APP/Info.plist" >/dev/null
