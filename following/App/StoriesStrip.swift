@@ -66,7 +66,7 @@ final class StoriesModel: ObservableObject {
         }
         strip.onMessage = { [weak self] type, value in
             guard let self else { return }
-            if type == "stripReady" { self.rowReady(); self.pushBanner(); OfflineStories.shared.pushState(); return }
+            if type == "stripReady" { self.rowReady(); self.pushBanner(); OfflineStories.shared.pushState(); Task { await OfflineStories.shared.checkSeenElsewhere() }; return }
             // Load all stories (the button above the row), and offline, a person's saved stories.
             if type == "offlineTap" { OfflineStories.shared.buttonTapped(); return }
             if type == "openOffline", let name = value as? String { OfflineStories.shared.viewerStart = name; return }

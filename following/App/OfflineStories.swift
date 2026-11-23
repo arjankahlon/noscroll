@@ -197,8 +197,8 @@ final class OfflineStories: ObservableObject {
 
     // MARK: Watching
 
-    /// Watched in the offline viewer: written down for Instagram. (The photo is deleted when the
-    /// viewer closes, so going back a story still works.)
+    /// Watched in the offline viewer: written down for Instagram. The photo stays (and can be
+    /// watched again) until Instagram has been told, once back online.
     func watched(_ item: Item, in reel: Reel) {
         guard !pending.contains(where: { $0.mediaId == item.pk }) else { return }
         pending.append(Seen(reelId: reel.id, mediaId: item.pk, ownerId: reel.userId, takenAt: item.takenAt,
@@ -206,17 +206,46 @@ final class OfflineStories: ObservableObject {
         savePending()
     }
 
-    /// The viewer closed: delete what was watched.
+    func isWatched(_ item: Item) -> Bool { pending.contains { $0.mediaId == item.pk } }
+
+    /// The viewer closed: if there's signal, send what was watched.
     func viewerClosed() {
-        let seen = Set(pending.map(\.mediaId))
+        pushState()
+        sync()
+    }
+
+    /// Instagram has been told about this story: its photo can go.
+    private func synced(_ s: Seen) {
         for i in reels.indices {
-            for item in reels[i].items where seen.contains(item.pk) { remove(item.file) }
-            reels[i].items.removeAll { seen.contains($0.pk) }
+            for item in reels[i].items where item.pk == s.mediaId { remove(item.file) }
+            reels[i].items.removeAll { $0.pk == s.mediaId }
         }
         dropEmptyReels()
         saveManifest()
-        pushState()
-        sync()
+    }
+
+    /// Back online, with Instagram's latest story row: photos of stories already seen some other
+    /// way (another phone, or Instagram's own viewer) go too.
+    func pruneSeen(_ seen: [String: Int]) {
+        let waiting = Set(pending.map(\.mediaId))
+        var changed = false
+        for i in reels.indices {
+            guard let s = seen[reels[i].id], s > 0 else { continue }
+            for item in reels[i].items where item.takenAt <= s && !waiting.contains(item.pk) { remove(item.file); changed = true }
+            reels[i].items.removeAll { $0.takenAt <= s && !waiting.contains($0.pk) }
+        }
+        if changed { dropEmptyReels(); saveManifest(); pushState() }
+    }
+
+    /// Ask the story row's page for Instagram's latest "seen" times and prune with them.
+    func checkSeenElsewhere() async {
+        guard !offline, !reels.isEmpty, let strip else { return }
+        let js = "return JSON.stringify((window.__flTray || []).map(function (r) { return [String(r.id), r.seen || 0]; }))"
+        guard let raw = try? await strip.webView.callAsyncJavaScript(js, arguments: [:], contentWorld: .page) as? String,
+              let data = raw.data(using: .utf8), let pairs = try? JSONSerialization.jsonObject(with: data) as? [[Any]] else { return }
+        var map: [String: Int] = [:]
+        for p in pairs where p.count == 2 { if let id = p[0] as? String { map[id] = (p[1] as? Int) ?? Int((p[1] as? Double) ?? 0) } }
+        if !map.isEmpty { pruneSeen(map) }
     }
 
     /// Opened someone's stories in Instagram's own viewer (online): their copies are no longer needed.
@@ -251,6 +280,7 @@ final class OfflineStories: ObservableObject {
                     dryRunLog.append("seen reel=\(s.reelId) media=\(s.mediaId) owner=\(s.ownerId) taken=\(s.takenAt) seenAt=\(s.seenAt)")
                     pending.removeFirst()
                     savePending()
+                    synced(s)
                     continue
                 }
                 #endif
@@ -264,6 +294,7 @@ final class OfflineStories: ObservableObject {
                 if !ok { break }   // try again later (next connection, or next time the app opens)
                 pending.removeFirst()
                 savePending()
+                synced(s)
             }
             pushState()
             if pending.isEmpty { strip?.webView.reload() }   // the row shows them as seen
@@ -361,7 +392,12 @@ struct OfflineStoryViewer: View {
                 })
         }
         .statusBarHidden()
-        .onAppear { markWatched() }
+        .onAppear {
+            // Start at their first story not watched yet (watched ones stay until synced, and
+            // can be watched again).
+            if let r = reel, let i = r.items.firstIndex(where: { !store.isWatched($0) }) { itemIndex = i }
+            markWatched()
+        }
         .onReceive(tick) { _ in
             guard !paused, item != nil else { return }
             progress += 0.05 / duration
