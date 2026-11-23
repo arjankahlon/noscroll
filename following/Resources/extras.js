@@ -469,7 +469,7 @@
       html = ICON_DOWN + '<span>' + (st.message || "Couldn't load") + '</span>';
       color = '#ed4956';
     } else if (st.offline) {
-      html = ICON_OFF + '<span>' + (n ? 'Offline · ' + n + ' saved' : 'Offline') + '</span>';
+      html = ICON_OFF + '<span>' + (n ? 'Offline · ' + n + ' available' : 'Offline') + '</span>';
       color = '#e07a00';
     } else if (n) {
       html = ICON_SAVED + '<span>' + n + ' available offline</span>';
