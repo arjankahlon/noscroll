@@ -2088,6 +2088,7 @@
     var t = e.changedTouches && e.changedTouches[0];
     if (!a || !tapStart || !t || Math.abs(t.clientX - tapStart.x) > 10 || Math.abs(t.clientY - tapStart.y) > 10) return;
     e.preventDefault();
+    post({ type: 'haptic', value: 'tap' });   // like the tab bar (the app checks "Haptic on tab switch")
     a.click();
   }, true);
 
