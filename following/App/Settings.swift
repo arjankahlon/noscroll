@@ -38,15 +38,14 @@ final class AppSettings: ObservableObject {
     /// Appearance follows the phone).
     static let sections: [(title: String, items: [Item])] = [
         ("Home feed", [
-            Item(key: "allFeed", title: "All feed", detail: "A third tab next to Following: Instagram's regular feed, suggested posts included.", defaultOn: false),
             Item(key: "storyCount", title: "\"Stories seen\" counter", detail: ""),
+            Item(key: "offlineStories", title: "Allow offline stories", detail: "Load offline stories, above your stories. When off, the app's version shows there instead."),
             Item(key: "bios", title: "Bios next to names", detail: "For private accounts, and public ones under the limit below."),
             Item(key: "oldDates", title: "Red dates on older posts", detail: "Bold red date on posts at least this many days old."),
-            Item(key: "foldEarlier", title: "Auto-collapse earlier posts", detail: "When you're caught up at the top, older posts stay hidden until you tap View earlier posts."),
             Item(key: "hideLikedEarlier", title: "Don't show posts you've already liked", detail: "Below the caught-up checkmark."),
         ]),
         ("Search", [
-            Item(key: "searchHidesExplore", title: "Search hides Explore", detail: "Search opens straight to the search box, with no Explore grid."),
+            Item(key: "explorePage", title: "Enable Explore page", detail: "When off, the Search button goes straight to the search bar without showing the Explore page.", defaultOn: false),
         ]),
         ("Haptic Vibrations", [
             Item(key: "hapticTabs", title: "Haptic on tab switch", detail: ""),
@@ -77,6 +76,8 @@ final class AppSettings: ObservableObject {
     @Published private(set) var mutedAccounts: [MutedAccount] = []
     /// Unmutes an account through Instagram (set by the app: it runs in the Home page).
     var unmuter: ((String) async -> Bool)?
+    /// Mutes an account by username (posts, story) through Instagram, from the Home page.
+    var muter: ((String, Bool, Bool) async -> Bool)?
 
     /// Instagram's own list (from MutedSync) replaces what's here.
     func replaceMuted(_ list: [MutedAccount]) {
@@ -100,7 +101,8 @@ final class AppSettings: ObservableObject {
         grayscale = d.bool(forKey: "settings.grayscale")
         bioLimit = d.object(forKey: "settings.bioLimit") as? Int ?? 4000
         oldDays = d.object(forKey: "settings.oldDays") as? Int ?? 3
-        defaultFeed = d.string(forKey: "settings.defaultFeed") == "following" ? "following" : "friends"
+        let df = d.string(forKey: "settings.defaultFeed") ?? "friends"
+        defaultFeed = ["friends", "following", "all"].contains(df) ? df : "friends"
         var s: [String: Bool] = [:]
         for section in Self.sections {
             for item in section.items {
@@ -109,12 +111,33 @@ final class AppSettings: ObservableObject {
         }
         // Switches that live on a row of their own (not in `sections`).
         s["bioPublic"] = d.object(forKey: "settings.bioPublic") as? Bool ?? true
+        // The Home feeds (Customize feeds). All is off unless switched on.
+        for f in Self.feeds { s[f.key] = d.object(forKey: "settings." + f.key) as? Bool ?? f.defaultOn }
         switches = s
         if let data = d.data(forKey: "settings.mutedAccounts"),
            let list = try? JSONDecoder().decode([MutedAccount].self, from: data) { mutedAccounts = list }
     }
 
     func isOn(_ key: String) -> Bool { switches[key] ?? true }
+
+    /// The Home feeds, in their order at the top of Home.
+    static let feeds: [(key: String, mode: String, title: String, detail: String, defaultOn: Bool)] = [
+        ("feedFriends", "friends", "Friends", "Private accounts you follow, newest first", true),
+        ("feedFollowing", "following", "Following", "Accounts you follow, in Instagram's suggested order", true),
+        ("allFeed", "all", "All", "Instagram's regular feed with suggested posts", false),
+    ]
+    var enabledFeeds: [String] { Self.feeds.filter { isOn($0.key) }.map(\.mode) }
+
+    /// A feed's switch. The last one on can't be switched off; switching off the default feed
+    /// makes the first one still on the default.
+    func feedBinding(_ key: String) -> Binding<Bool> {
+        Binding(get: { self.isOn(key) }, set: { on in
+            if !on && self.enabledFeeds.count <= 1 { return }
+            self.switches[key] = on
+            if !self.enabledFeeds.contains(self.defaultFeed), let first = self.enabledFeeds.first { self.defaultFeed = first }
+            self.save()
+        })
+    }
 
     func binding(_ key: String) -> Binding<Bool> {
         Binding(get: { self.isOn(key) }, set: { self.switches[key] = $0; self.save() })
@@ -132,9 +155,9 @@ final class AppSettings: ObservableObject {
 
     func markSeen() { changed = false }
 
-    /// The NoScroll engine's own switches (its Explore rules follow "Search hides Explore").
+    /// The NoScroll engine's own switches (its Explore rules follow "Enable Explore page").
     var engineSettingsJSON: String {
-        isOn("searchHidesExplore") ? "{}" :
+        !isOn("explorePage") ? "{}" :
             "{\"instagram.explore-route\": false, \"instagram.explore-tab\": false, \"instagram.search-grid\": false}"
     }
 
@@ -143,7 +166,7 @@ final class AppSettings: ObservableObject {
         var obj: [String: Any] = switches
         obj["bioLimit"] = bioLimit
         obj["oldDays"] = oldDays
-        obj["defaultFeed"] = defaultFeed
+        obj["defaultFeed"] = enabledFeeds.contains(defaultFeed) ? defaultFeed : (enabledFeeds.first ?? "friends")
         let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data("{}".utf8)
         return "window.__FL = \(String(data: data, encoding: .utf8) ?? "{}");"
     }
@@ -207,9 +230,15 @@ struct SettingsView: View {
                 ForEach(AppSettings.sections, id: \.title) { section in
                     Section(section.title) {
                         if section.title == "Home feed" {
-                            Picker("Default feed", selection: $settings.defaultFeed) {
-                                Text("Friends").tag("friends")
-                                Text("Following").tag("following")
+                            NavigationLink {
+                                FeedsView()
+                            } label: {
+                                HStack {
+                                    Text("Customize feeds")
+                                    Spacer()
+                                    Text(AppSettings.feeds.filter { settings.isOn($0.key) }.map(\.title).joined(separator: ", "))
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                         ForEach(section.items) { item in
@@ -284,11 +313,50 @@ struct SettingsView: View {
     }
 }
 
+/// Customize feeds: which feeds Home has (Friends, Following, All), and which one it opens on.
+struct FeedsView: View {
+    @ObservedObject var settings = AppSettings.shared
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(AppSettings.feeds, id: \.key) { f in
+                    Toggle(isOn: settings.feedBinding(f.key)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(f.title)
+                            Text(f.detail).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(settings.isOn(f.key) && settings.enabledFeeds.count <= 1)
+                }
+            } footer: {
+                Text("At least one feed stays on.")
+            }
+            Section {
+                Picker("Default feed", selection: $settings.defaultFeed) {
+                    ForEach(AppSettings.feeds.filter { settings.isOn($0.key) }, id: \.key) { f in
+                        Text(f.title).tag(f.mode)
+                    }
+                }
+            } footer: {
+                Text("The feed Home opens on.")
+            }
+        }
+        .navigationTitle("Customize feeds")
+        .navigationBarTitleDisplayMode(.inline)
+        .followsLook()
+    }
+}
+
 /// Accounts muted from this app, each with an Unmute button (Instagram's own unmute, posts and
 /// stories).
 struct MutedAccountsView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject private var sync = MutedSync.shared
+    @State private var asking = false
+    @State private var newName = ""
+    @State private var adding = false
+    @State private var addError: String?
     @State private var busy: Set<String> = []
     @State private var failed: Set<String> = []
 
@@ -303,6 +371,19 @@ struct MutedAccountsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 2)
+            }
+            Section {
+                Button {
+                    newName = ""
+                    asking = true
+                } label: {
+                    HStack {
+                        Label("Add account", systemImage: "plus.circle.fill")
+                        if adding { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(adding)
+                if let addError { Text(addError).font(.footnote).foregroundStyle(.red) }
             }
             Section {
             if settings.mutedAccounts.isEmpty {
@@ -330,10 +411,37 @@ struct MutedAccountsView: View {
         .navigationBarTitleDisplayMode(.inline)
         // Always Instagram's real list: muted in the Instagram app or on another phone too.
         .task { await MutedSync.shared.refresh(force: true) }
+        .alert("Mute an account", isPresented: $asking) {
+            TextField("username", text: $newName)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Mute posts") { add(posts: true, story: false) }
+            Button("Mute story") { add(posts: false, story: true) }
+            Button("Mute posts and story") { add(posts: true, story: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Type their username, then choose what to mute. They aren't told.")
+        }
         .toolbar {
             if sync.syncing { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
         }
         .followsLook()
+    }
+
+    private var cleanName: String {
+        newName.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "@")).lowercased()
+    }
+
+    private func add(posts: Bool, story: Bool) {
+        let name = cleanName
+        guard !name.isEmpty else { return }
+        adding = true
+        addError = nil
+        Task {
+            let ok = await settings.muter?(name, posts, story) ?? false
+            adding = false
+            if ok { await MutedSync.shared.refresh(force: true) } else { addError = "Couldn't mute @\(name). Check the username and try again." }
+        }
     }
 
     private func unmute(_ account: AppSettings.MutedAccount) {

@@ -295,6 +295,16 @@
     if (c) c.remove();
     var v = document.getElementById('fl-offline');
     if (v) v.remove();
+    var vl = document.getElementById('fl-version');
+    if (vl) vl.remove();
+  }
+  function versionLabel() {
+    if (document.getElementById('fl-version') || !window.__FOLLOWING_VERSION) return;
+    var v = document.createElement('div');
+    v.id = 'fl-version';
+    v.style.cssText = 'position:absolute;top:1px;right:14px;z-index:5;font:700 17px/21px -apple-system,system-ui,sans-serif;color:var(--fl-strong);pointer-events:none';
+    v.textContent = 'Following v' + window.__FOLLOWING_VERSION;
+    document.body.appendChild(v);
   }
 
   function hideForStrip(el) {
@@ -400,7 +410,7 @@
   function offlineRow() {
     var row = document.getElementById('fl-offrow');
     var st = offlineState;
-    var show = TAB === 'stories' && location.pathname === '/' && st.offline && (st.users || []).length > 0;
+    var show = S('offlineStories') && TAB === 'stories' && location.pathname === '/' && st.offline && (st.users || []).length > 0;
     if (!show) { if (row) row.remove(); return; }
     var me = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || '';
     var tray = (window.__flTray || []).filter(function (r) { return String((r.user || {}).pk) !== me; });
@@ -524,7 +534,7 @@
   // Instagram's (which can't load without signal).
   if (TAB === 'stories') {
     document.addEventListener('click', function (e) {
-      if (!offlineState.offline) return;
+      if (!offlineState.offline || !S('offlineStories')) return;
       var s = e.target && e.target.closest && e.target.closest('[role="button"][aria-label^="Story by "]');
       if (!s) return;
       var m = /^Story by (.+?), (?:seen|not seen)$/.exec(s.getAttribute('aria-label') || '');
@@ -611,8 +621,9 @@
       c.style.cssText = 'position:absolute;top:4px;left:14px;z-index:5;font:600 12px/16px -apple-system,system-ui,sans-serif;color:#737373;pointer-events:none';
       document.body.appendChild(c);
     }
-    // And on the right of the same line: Load all stories (for a stretch without signal).
-    offlineButton();
+    // And on the right of the same line: Load offline stories (for a stretch without signal), or
+    // with offline stories switched off in App settings, which version of the app this is.
+    if (S('offlineStories')) offlineButton(); else versionLabel();
     var text = S('storyCount') ? seenN + '/' + total + ' stories seen' : '';
     c.style.display = text ? '' : 'none';
     if (c.textContent !== text) {
@@ -669,9 +680,12 @@
   var MODE_KEY = 'following.mode';
   // The feed Home opens on is a setting ("Default feed"). Switching feeds sticks until the app is
   // closed; a new default takes over as soon as it's changed.
-  var DEFAULT_FEED = (window.__FL && window.__FL.defaultFeed === 'following') ? 'following' : 'friends';
-  // The All feed (a setting, off unless switched on).
-  var ALL_FEED = !!(window.__FL && window.__FL.allFeed === true);
+  // Which feeds Home has (Customize feeds; All is off unless switched on), and which it opens on.
+  var FEEDS_ON = [['friends', 'feedFriends'], ['following', 'feedFollowing'], ['all', 'allFeed']].filter(function (f) {
+    return f[0] === 'all' ? !!(window.__FL && window.__FL.allFeed === true) : S(f[1]);
+  }).map(function (f) { return f[0]; });
+  if (!FEEDS_ON.length) FEEDS_ON = ['friends'];
+  var DEFAULT_FEED = window.__FL && FEEDS_ON.indexOf(window.__FL.defaultFeed) !== -1 ? window.__FL.defaultFeed : FEEDS_ON[0];
   try {
     if (sessionStorage.getItem('following.modeDefault') !== DEFAULT_FEED) {
       sessionStorage.setItem(MODE_KEY, DEFAULT_FEED);
@@ -681,7 +695,7 @@
   function feedMode() {
     try {
       var m = sessionStorage.getItem(MODE_KEY);
-      return m === 'following' || m === 'friends' || (m === 'all' && ALL_FEED) ? m : DEFAULT_FEED;
+      return FEEDS_ON.indexOf(m) !== -1 ? m : DEFAULT_FEED;
     } catch (e) { return DEFAULT_FEED; }
   }
   function setFeedMode(m) {
@@ -793,7 +807,7 @@
       if (bar) bar.remove();
       bar = document.createElement('div');
       bar.id = 'fl-modes';
-      [['friends', 'Friends'], ['following', 'Following']].concat(ALL_FEED ? [['all', 'All']] : []).forEach(function (pair) {
+      [['friends', 'Friends'], ['following', 'Following'], ['all', 'All']].filter(function (p) { return FEEDS_ON.indexOf(p[0]) !== -1; }).forEach(function (pair) {
         var b = document.createElement('button');
         b.type = 'button';
         b.dataset.mode = pair[0];

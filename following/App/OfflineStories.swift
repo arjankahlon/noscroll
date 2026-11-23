@@ -206,6 +206,12 @@ final class OfflineStories: ObservableObject {
         Task { await load() }
     }
 
+    /// "Allow offline stories" switched off in App settings: nothing saved is kept (anything still
+    /// waiting to be sent to Instagram still goes).
+    func settingsChanged() {
+        if !AppSettings.shared.isOn("offlineStories") && (savedCount > 0 || !todo.isEmpty) { clearAll() }
+    }
+
     /// Delete every saved story, except ones watched offline that Instagram hasn't heard about
     /// yet (they go once they're sent).
     func clearAll() {

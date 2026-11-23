@@ -129,6 +129,7 @@ struct RootTabs: View {
             settings.markSeen()
             tabs.applySettings()
             reminder.update()
+            OfflineStories.shared.settingsChanged()
         }) { SettingsView() }
         // Saved stories, watched offline (Load all stories, above the story row).
         .fullScreenCover(isPresented: Binding(get: { offlineStories.viewerStart != nil },
@@ -200,6 +201,7 @@ struct RootTabs: View {
         }
         .onAppear {
             settings.unmuter = { [weak tabs] id in await tabs?.unmute(id) ?? false }
+            settings.muter = { [weak tabs] u, posts, story in await tabs?.mute(username: u, posts: posts, story: story) ?? false }
             // Muted accounts: match Instagram's list (after the feed has had time to load).
             Task { try? await Task.sleep(nanoseconds: 25_000_000_000); await MutedSync.shared.refresh() }
             stories.bannerShown = reminder.show
@@ -260,6 +262,24 @@ final class TabWebViews: ObservableObject {
           { target_posts_author_id: id, target_reel_author_id: id }).then(function () { return true; }, function () { return false; });
         """
         let result = try? await controller(for: .home).webView.callAsyncJavaScript(js, arguments: ["id": id], contentWorld: .page)
+        return (result as? Bool) == true || (result as? NSNumber)?.boolValue == true
+    }
+
+    /// Mute someone by username (Muted accounts → Add account): their posts, their story, or both,
+    /// with Instagram's own mute. Their id comes from their profile page.
+    func mute(username: String, posts: Bool, story: Bool) async -> Bool {
+        let js = """
+        var html = await (await fetch('https://www.instagram.com/' + encodeURIComponent(u) + '/', { credentials: 'include' })).text();
+        var m = /"page_id":"profilePage_(\\d+)"/.exec(html) || /"profile_id":"(\\d+)"/.exec(html);
+        if (!m) return false;
+        var f = {};
+        if (posts) f.target_posts_author_id = m[1];
+        if (story) f.target_reel_author_id = m[1];
+        return await window.__flIgAction('/api/v1/friendships/mute_posts_or_story_from_follow/', f)
+          .then(function () { return true; }, function () { return false; });
+        """
+        let result = try? await controller(for: .home).webView.callAsyncJavaScript(
+            js, arguments: ["u": username, "posts": posts, "story": story], contentWorld: .page)
         return (result as? Bool) == true || (result as? NSNumber)?.boolValue == true
     }
 
