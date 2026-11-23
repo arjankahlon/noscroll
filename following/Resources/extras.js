@@ -1105,11 +1105,16 @@
   var HIDDEN_BIOS_KEY = 'following.hiddenBios';
   var hiddenBios = {};
   try { hiddenBios = JSON.parse(localStorage.getItem(HIDDEN_BIOS_KEY) || '{}') || {}; } catch (e) { hiddenBios = {}; }
+  // Bios shown by hand (Show bio for this user), even over the follower limit.
+  var SHOWN_BIOS_KEY = 'following.shownBios';
+  var shownBios = {};
+  try { shownBios = JSON.parse(localStorage.getItem(SHOWN_BIOS_KEY) || '{}') || {}; } catch (e) { shownBios = {}; }
   function setBioHidden(u, hide) {
     var id = userId(u);
     if (!id) return;
-    if (hide) hiddenBios[id] = 1; else delete hiddenBios[id];
+    if (hide) { hiddenBios[id] = 1; delete shownBios[id]; } else { delete hiddenBios[id]; shownBios[id] = 1; }
     try { localStorage.setItem(HIDDEN_BIOS_KEY, JSON.stringify(hiddenBios)); } catch (e) {}
+    try { localStorage.setItem(SHOWN_BIOS_KEY, JSON.stringify(shownBios)); } catch (e) {}
     // Every card from this account, right away.
     [].forEach.call(document.querySelectorAll('#fl-ff article'), function (a) {
       if (a.__flUser && userId(a.__flUser) === id) {
@@ -1121,15 +1126,17 @@
       }
     });
   }
-  function bioLine(u) {
-    if (!S('bios')) return '';
-    if (hiddenBios[userId(u)]) return '';
+  // force: the bio as it would show if switched on for this account (for the post menu).
+  function bioLine(u, force) {
+    var forced = force || !!shownBios[userId(u)];
+    if (!force && hiddenBios[userId(u)]) return '';
+    if (!S('bios') && !forced) return '';
     var p = profileOf(u);
     if (!p || !p.b) return '';
     var priv = typeof u.is_private === 'boolean' ? u.is_private :
       (window.__flPrivacy || {})[(u.username || '').toLowerCase()] === true;
     // Public accounts: only under the follower limit, and only if that's switched on.
-    if (!priv && (!S('bioPublic') || !(p.f < BIO_MAX_FOLLOWERS))) return '';
+    if (!priv && !forced && (!S('bioPublic') || !(p.f < BIO_MAX_FOLLOWERS))) return '';
     var b = p.b
       .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
       .replace(/\S+@\S+\.\S+/g, '')
@@ -1140,6 +1147,57 @@
     try { if (!/[\p{L}\p{N}]/u.test(b)) return ''; } catch (e) { if (!/[A-Za-z0-9]/.test(b)) return ''; }
     return b;
   }
+
+  // Likes made without signal (posts already on screen): kept on the phone and sent when the
+  // connection is back, from the Home page. Liking then unliking before that cancels out.
+  var LIKE_Q_KEY = 'following.likeQueue';
+  function likeQueue() { try { return JSON.parse(localStorage.getItem(LIKE_Q_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function saveLikeQueue(q) { try { localStorage.setItem(LIKE_Q_KEY, JSON.stringify(q)); } catch (e) {} }
+  function noSignal(err) {
+    return !navigator.onLine || err instanceof TypeError || /no session|Load failed|network/i.test(String(err && err.message || err));
+  }
+  function likeLater(m, want, err) {
+    if (!noSignal(err)) return false;
+    var q = likeQueue(), pk = String(m.pk || String(m.id).split('_')[0]);
+    var e = q[pk];
+    if (e && e.orig === want) delete q[pk];   // back to how it was: nothing to send
+    else q[pk] = { want: want, orig: e ? e.orig : !want, id: String(m.id || pk), token: m.organic_tracking_token || '' };
+    saveLikeQueue(q);
+    return true;
+  }
+  // A post drawn again before its like went out still shows it.
+  function applyQueuedLike(m) {
+    var e = likeQueue()[String(m.pk || String(m.id || '').split('_')[0])];
+    if (e) m.has_liked = e.want;
+  }
+  var flushingLikes = false;
+  function flushLikes() {
+    if (TAB !== 'home' || flushingLikes || !navigator.onLine) return;
+    var q = likeQueue(), pks = Object.keys(q);
+    if (!pks.length) return;
+    flushingLikes = true;
+    var next = function (i) {
+      if (i >= pks.length) { flushingLikes = false; return; }
+      var pk = pks[i], e = q[pk];
+      likeRequest(e.want ? 'like' : 'unlike', { pk: pk, id: e.id, organic_tracking_token: e.token }).then(function () {
+        var now = likeQueue(); delete now[pk]; saveLikeQueue(now);
+        next(i + 1);
+      }, function (err) {
+        if (noSignal(err)) { flushingLikes = false; return; }   // still no signal: later
+        var now = likeQueue(); delete now[pk]; saveLikeQueue(now);   // Instagram said no: drop it
+        next(i + 1);
+      });
+    };
+    next(0);
+  }
+  window.addEventListener('online', function () { setTimeout(flushLikes, 1500); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(flushLikes, 1500); });
+  setInterval(flushLikes, 30000);
+  setTimeout(flushLikes, 6000);
+  window.__flLikeQueue = likeQueue;
+  // Debugging from the Mac (following/ev.sh), with made-up posts only.
+  window.__flLikeLater = likeLater;
+  window.__flApplyQueuedLike = applyQueuedLike;
 
   function toggleLike(m, btn, label) {
     var want = !m.has_liked;
@@ -1154,12 +1212,15 @@
     if (typeof m.like_count === 'number') { m.like_count += want ? 1 : -1; label(); }
     likeRequest(want ? 'like' : 'unlike', m).catch(function (err) {
       try { window.__flLikeError = String(err && err.message || err); } catch (e) {}
+      // No signal: keep it liked, and send it once the connection is back.
+      if (likeLater(m, want, err)) return;
       setUi(!want);
       if (typeof m.like_count === 'number') { m.like_count += want ? -1 : 1; label(); }
     });
   }
 
   function card(m) {
+    applyQueuedLike(m);
     var user = m.user || {};
     var name = user.username || '';
     var p = el('article', 'p');
@@ -1576,11 +1637,15 @@
       sheet.appendChild(el('div', 'msg', text));
       setTimeout(close, 1400);
     };
-    var hidden = !!hiddenBios[id];
-    row(hidden ? 'Show bio for this user' : 'Hide bio for this user', '', function () {
-      setBioHidden(u, !hidden);
-      close();
-    });
+    // Says what it would do to what's on screen now: a bio left out by the follower limit (or
+    // hidden by hand) can be shown, one showing can be hidden. No bio at all: no option.
+    var showing = !!bioLine(u);
+    if (showing || bioLine(u, true)) {
+      row(showing ? 'Hide bio for this user' : 'Show bio for this user', '', function () {
+        setBioHidden(u, showing);
+        close();
+      });
+    }
     row('Mute posts', '', function (b) {
       b.textContent = 'Muting…';
       igAction('/api/v1/friendships/mute_posts_or_story_from_follow/', { target_posts_author_id: id }).then(function () {
