@@ -420,7 +420,22 @@
     offlineState = st || offlineState;
     drawOffline();
     grayRings();
+    // Stories watched offline count as seen in "x/y stories seen" right away.
+    if (stripBox) reportStripHeight(stripBox);
   };
+  // Instagram's own viewer moves from person to person without loading a page: note each one
+  // the moment it opens, so the count is right as soon as the viewer closes.
+  if (TAB === 'stories') {
+    ['pushState', 'replaceState'].forEach(function (k) {
+      var orig = history[k];
+      history[k] = function () {
+        var r = orig.apply(this, arguments);
+        var sv = /^\/stories\/([^/]+)\//.exec(location.pathname);
+        if (sv && sv[1] !== 'highlights') storySeen[decodeURIComponent(sv[1])] = true;
+        return r;
+      };
+    });
+  }
   // Everyone whose saved stories you've all watched offline: their ring goes gray right away
   // (Instagram's row only learns about it once you're back online).
   function grayRings() {
@@ -518,7 +533,8 @@
       var u = r.user || {};
       if (String(u.pk) === me) return;
       total++;
-      if ((r.seen && (r.seen >= r.latest_reel_media || r.seen > dayAgo)) || storySeen[u.username]) seenN++;
+      if ((r.seen && (r.seen >= r.latest_reel_media || r.seen > dayAgo)) || storySeen[u.username] ||
+          (offlineState.watchedAny || []).indexOf(u.username) !== -1) seenN++;
     });
     var c = document.getElementById('fl-story-count');
     if (!c) {

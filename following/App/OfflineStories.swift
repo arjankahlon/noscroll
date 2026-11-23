@@ -446,6 +446,8 @@ final class OfflineStories: ObservableObject {
         var state: [String: Any] = ["offline": offline, "saved": savedCount, "pending": pending.count + likeChanges.count + replies.count,
                                     "users": reels.filter { !$0.items.isEmpty }.map(\.username),
                                     // Everyone whose saved stories have all been watched: their ring goes gray.
+                                    // Anyone with at least one story watched offline counts as seen in the count.
+                                    "watchedAny": reels.filter { r in r.items.contains { waiting.contains($0.pk) } }.map(\.username),
                                     "watched": reels.filter { r in !r.items.isEmpty && r.items.allSatisfy { waiting.contains($0.pk) } }.map(\.username)]
         switch phase {
         case .idle: state["phase"] = "idle"
@@ -470,6 +472,7 @@ struct OfflineStoryViewer: View {
     @State private var progress: Double = 0
     @State private var paused = false
     @State private var drag: CGFloat = 0
+    @State private var slide: CGFloat = 0
     @State private var replyText = ""
     @State private var note: String?
     @FocusState private var typing: Bool
@@ -526,10 +529,33 @@ struct OfflineStoryViewer: View {
                     .onEnded { _ in paused = false })
             }
             .offset(y: max(0, drag))
+            .offset(x: slide)
+            // Swipe down to close; swipe left or right for the next or previous person.
             .gesture(DragGesture(minimumDistance: 20)
-                .onChanged { v in if v.translation.height > 0 { drag = v.translation.height; paused = true } }
+                .onChanged { v in
+                    let dx = v.translation.width, dy = v.translation.height
+                    if abs(dx) > abs(dy) { slide = dx; drag = 0 } else if dy > 0 { drag = dy; slide = 0 }
+                    paused = true
+                }
                 .onEnded { v in
-                    if v.translation.height > 120 { close() } else { withAnimation(.spring()) { drag = 0 }; paused = false }
+                    let dx = v.translation.width, dy = v.translation.height
+                    if abs(dx) > abs(dy), abs(dx) > 70 {
+                        let ok = dx < 0 ? reelIndex + 1 < reels.count : reelIndex > 0
+                        if ok {
+                            withAnimation(.easeOut(duration: 0.15)) { slide = dx < 0 ? -500 : 500 }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                dx < 0 ? nextPerson() : previousPerson()
+                                slide = dx < 0 ? 500 : -500
+                                withAnimation(.easeOut(duration: 0.2)) { slide = 0 }
+                                paused = false
+                            }
+                            return
+                        }
+                        if dx < 0 { close(); return }   // past the last person
+                    }
+                    if dy > 120 && abs(dy) > abs(dx) { close(); return }
+                    withAnimation(.spring()) { drag = 0; slide = 0 }
+                    paused = false
                 })
         }
         .statusBarHidden()
@@ -644,6 +670,23 @@ struct OfflineStoryViewer: View {
         if itemIndex + 1 < reel.items.count { itemIndex += 1 }
         else if reelIndex + 1 < reels.count { reelIndex += 1; itemIndex = 0 }
         else { return close() }
+        progress = 0
+        markWatched()
+    }
+
+    /// The next person's first story not watched yet (or their first).
+    private func nextPerson() {
+        guard reelIndex + 1 < reels.count else { return close() }
+        reelIndex += 1
+        itemIndex = reels[reelIndex].items.firstIndex(where: { !store.isWatched($0) }) ?? 0
+        progress = 0
+        markWatched()
+    }
+
+    private func previousPerson() {
+        guard reelIndex > 0 else { return }
+        reelIndex -= 1
+        itemIndex = reels[reelIndex].items.firstIndex(where: { !store.isWatched($0) }) ?? 0
         progress = 0
         markWatched()
     }
