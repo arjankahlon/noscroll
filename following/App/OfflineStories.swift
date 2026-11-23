@@ -673,13 +673,6 @@ struct OfflineStoryViewer: View {
                 }
                 VStack {
                     Spacer()
-                    if let note {
-                        Text(note).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                            .padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(.black.opacity(0.6), in: Capsule())
-                            .padding(.bottom, 8)
-                            .transition(.opacity)
-                    }
                     bottomBar
                 }
                 // One touch area for everything, like Instagram's: touching pauses (for as long as
@@ -709,7 +702,18 @@ struct OfflineStoryViewer: View {
                             }
                         })
                 // On top of the touch area, so its buttons (the eye, close) get their taps.
-                header.padding(.horizontal, 10).padding(.top, 6).zIndex(2)
+                VStack(alignment: .trailing, spacing: 6) {
+                    header.padding(.horizontal, 10).padding(.top, 6)
+                    // Notes (this view will / won't be sent, reply saved) show just under the eye.
+                    if let note {
+                        Text(note).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(.black.opacity(0.6), in: Capsule())
+                            .padding(.trailing, 10)
+                            .transition(.opacity)
+                    }
+                }
+                .zIndex(2)
             }
             .offset(y: max(0, drag))
         }
