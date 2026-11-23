@@ -468,24 +468,32 @@
       row.appendChild(it);
     });
   }
+  // Apple's symbol for the state (sent by the app), tinted like the text; the drawn ones if not.
+  function sym(name, fallback) {
+    var d = (offlineState.icons || {})[name];
+    if (!d) return fallback;
+    var parts = d.split('|'), wh = (parts[1] || '20x18').split('x');
+    return '<span style="display:inline-block;width:' + wh[0] + 'px;height:' + wh[1] + 'px;background:currentColor;' +
+      '-webkit-mask:url(' + parts[0] + ') center/contain no-repeat;mask:url(' + parts[0] + ') center/contain no-repeat"></span>';
+  }
   function drawOffline() {
     var v = document.getElementById('fl-offline');
     if (!v) return;
     var b = v.querySelector('.btn'), bar = v.querySelector('.bar'), st = offlineState, html, color = '';
     var n = st.saved || 0;
     if (st.phase === 'loading') {
-      html = ICON_DOWN + '<span>' + (st.total ? 'Loading ' + st.done + ' of ' + st.total : 'Finding stories…') + '</span>';
+      html = sym('down', ICON_DOWN) + '<span>' + (st.total ? 'Loading ' + st.done + ' of ' + st.total : 'Finding stories…') + '</span>';
     } else if (st.phase === 'failed') {
-      html = ICON_DOWN + '<span>' + (st.message || "Couldn't load") + '</span>';
+      html = sym('down', ICON_DOWN) + '<span>' + (st.message || "Couldn't load") + '</span>';
       color = '#ed4956';
     } else if (st.offline) {
-      html = ICON_OFF + '<span>' + (n ? 'Offline · ' + n + ' available' : 'Offline') + '</span>';
+      html = sym('off', ICON_OFF) + '<span>' + (n ? 'Offline · ' + n + ' available' : 'Offline') + '</span>';
       color = '#e07a00';
     } else if (n) {
-      html = ICON_SAVED + '<span>' + n + ' available offline</span>';
+      html = sym('saved', ICON_SAVED) + '<span>' + n + ' available offline</span>';
       color = '#1f9d55';
     } else {
-      html = ICON_DOWN + '<span>Load offline stories</span>';
+      html = sym('down', ICON_DOWN) + '<span>Load offline stories</span>';
     }
     if (b.__html !== html) { b.innerHTML = html; b.__html = html; }
     b.style.color = color;

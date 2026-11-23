@@ -556,6 +556,22 @@ final class OfflineStories: ObservableObject {
     private func saveReplies() { if let d = try? JSONEncoder().encode(replies) { try? d.write(to: repliesURL, options: .atomic) } }
     private func savePending() { if let d = try? JSONEncoder().encode(pending) { try? d.write(to: pendingURL, options: .atomic) } }
 
+    /// Apple's own symbols for the button (the App Store's cloud download, a circled arrow once
+    /// saved, no Wi-Fi when offline), as pictures the page tints to match the text.
+    static let icons: [String: String] = {
+        var out: [String: String] = [:]
+        let names = ["down": "icloud.and.arrow.down", "saved": "arrow.down.circle", "off": "wifi.slash"]
+        let cfg = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        for (key, name) in names {
+            guard let img = UIImage(systemName: name, withConfiguration: cfg)?
+                .withTintColor(.black, renderingMode: .alwaysOriginal) else { continue }
+            let r = UIGraphicsImageRenderer(size: img.size, format: { let f = UIGraphicsImageRendererFormat(); f.scale = 3; return f }())
+            let png = r.pngData { _ in img.draw(at: .zero) }
+            out[key] = "data:image/png;base64," + png.base64EncodedString() + "|\(Int(img.size.width.rounded()))x\(Int(img.size.height.rounded()))"
+        }
+        return out
+    }()
+
     /// The button above the story row (extras.js draws it from this).
     func pushState() {
         let waiting = Set(pending.map(\.mediaId))
@@ -570,6 +586,7 @@ final class OfflineStories: ObservableObject {
         case .loading(let d, let t): state["phase"] = "loading"; state["done"] = d; state["total"] = t
         case .failed(let m): state["phase"] = "failed"; state["message"] = m
         }
+        state["icons"] = Self.icons
         guard let data = try? JSONSerialization.data(withJSONObject: state), let json = String(data: data, encoding: .utf8) else { return }
         strip?.webView.evaluateJavaScript("window.__flOfflineState && window.__flOfflineState(\(json))", completionHandler: nil)
     }
