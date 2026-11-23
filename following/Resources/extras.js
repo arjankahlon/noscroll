@@ -56,8 +56,23 @@
     if (log.length >= 3) return;
     log.push(now);
     try { sessionStorage.setItem('following.redirects', JSON.stringify(log)); } catch (e) {}
-    location.replace('/?variant=following');
+    // Only Home shows a feed. In the other tabs (where Instagram's Back button, or a logo, can
+    // lead to its home page) the tab goes back to its own start page instead.
+    location.replace(TAB_START[TAB] || '/?variant=following');
   }
+  var TAB_START = { search: '/explore/search/', messages: '/direct/inbox/', profile: '/?following_profile=1' };
+
+  // Instagram's Back button goes to its home page when the page was opened directly (no earlier
+  // page it knows of). Outside Home, Back goes back to the page before instead, as expected.
+  document.addEventListener('click', function (e) {
+    if (TAB === 'home' || TAB === 'stories' || !TAB_START[TAB]) return;
+    var svg = e.target && e.target.closest && e.target.closest('[role="button"],button,a');
+    if (!svg || !svg.querySelector('svg[aria-label="Back"]') || history.length < 2) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    history.back();
+  }, true);
 
   /* ---------- 2. Ads and suggestions ---------- */
   var AD_WORDS = { 'Sponsored': 1, 'Ad': 1, 'Paid partnership': 0 };
