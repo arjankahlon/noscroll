@@ -123,8 +123,8 @@ final class RefreshReminder: ObservableObject {
     var showsUpdate: Bool { updateVersion != nil }
 
     var bannerDetail: String {
-        if showsUpdate, let v = updateVersion { return "v\(v) ready" }
-        return expiryText
+        // A new version: the title says it all. The 7-day clock: how long is left.
+        showsUpdate ? "" : expiryText
     }
 
     /// "Expires in 2 days", "Expires today", "Expired".
@@ -172,15 +172,14 @@ struct RefreshBanner: View {
                 .font(.system(size: 14, weight: .bold))
             Text(reminder.bannerTitle)
                 .font(.system(size: 15, weight: .semibold))
-            Text("· \(reminder.bannerDetail)")
-                .font(.system(size: 15, weight: .regular))
-                .opacity(0.85)
-            // (i): how to refresh, full screen.
-            Button { Guide.shared.show = true } label: {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 16, weight: .semibold))
+            if !reminder.bannerDetail.isEmpty {
+                Text("· \(reminder.bannerDetail)")
+                    .font(.system(size: 15, weight: .regular))
+                    .opacity(0.85)
             }
-            .accessibilityLabel("How to refresh")
+            // (i): how to refresh, full screen (so does a tap anywhere on the banner).
+            Image(systemName: "info.circle")
+                .font(.system(size: 16, weight: .semibold))
         }
         .lineLimit(1)
         .minimumScaleFactor(0.85)
@@ -190,5 +189,9 @@ struct RefreshBanner: View {
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
         .background(RefreshGuideView.instagramPurple.ignoresSafeArea(edges: .top)) // Instagram purple, #833AB4
+        .contentShape(Rectangle())
+        .onTapGesture { Guide.shared.show = true }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(reminder.bannerTitle). How to refresh")
     }
 }

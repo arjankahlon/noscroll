@@ -23,7 +23,7 @@ cat > "$APP/Info.plist" <<'EOF'
 <key>CFBundleName</key><string>Following</string>
 <key>CFBundleDisplayName</key><string>Following</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.2</string>
+<key>CFBundleShortVersionString</key><string>1.3</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
 <key>MinimumOSVersion</key><string>17.0</string>
