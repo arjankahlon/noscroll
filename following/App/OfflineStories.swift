@@ -88,6 +88,7 @@ final class OfflineStories: ObservableObject {
     private var pendingURL: URL { folder.appendingPathComponent("seen.json") }
     private var likesURL: URL { folder.appendingPathComponent("likes.json") }
     private var repliesURL: URL { folder.appendingPathComponent("replies.json") }
+    private var hiddenURL: URL { folder.appendingPathComponent("unreported.json") }
 
     var savedCount: Int { reels.reduce(0) { $0 + $1.items.count } }
 
@@ -108,6 +109,7 @@ final class OfflineStories: ObservableObject {
         if let d = try? Data(contentsOf: likesURL), let p = try? JSONDecoder().decode([LikeChange].self, from: d) { likeChanges = p }
         if let d = try? Data(contentsOf: repliesURL), let p = try? JSONDecoder().decode([Reply].self, from: d) { replies = p }
         if let d = try? Data(contentsOf: todoURL), let p = try? JSONDecoder().decode([Todo].self, from: d) { todo = p }
+        if let d = try? Data(contentsOf: hiddenURL), let p = try? JSONDecoder().decode(Set<String>.self, from: d) { unreported = p }
         dropExpired()
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
@@ -346,13 +348,44 @@ final class OfflineStories: ObservableObject {
     /// Watched in the offline viewer: written down for Instagram. The photo stays (and can be
     /// watched again) until Instagram has been told, once back online.
     func watched(_ item: Item, in reel: Reel) {
-        guard !pending.contains(where: { $0.mediaId == item.pk }) else { return }
+        guard !unreported.contains(item.pk), !pending.contains(where: { $0.mediaId == item.pk }) else { return }
         pending.append(Seen(reelId: reel.id, mediaId: item.pk, ownerId: reel.userId, takenAt: item.takenAt,
                             seenAt: Int(Date().timeIntervalSince1970)))
         savePending()
     }
 
-    func isWatched(_ item: Item) -> Bool { pending.contains { $0.mediaId == item.pk } }
+    func isWatched(_ item: Item) -> Bool { unreported.contains(item.pk) || pending.contains { $0.mediaId == item.pk } }
+
+    /// Stories watched offline that Instagram won't be told about (the eye in the viewer).
+    @Published private(set) var unreported: Set<String> = []
+    func isUnreported(_ item: Item) -> Bool { unreported.contains(item.pk) }
+
+    /// The crossed-out eye: don't tell Instagram this story was watched (or, tapped again, do).
+    func toggleUnreported(_ item: Item, in reel: Reel) {
+        if unreported.remove(item.pk) == nil {
+            unreported.insert(item.pk)
+            pending.removeAll { $0.mediaId == item.pk }
+        } else {
+            watched(item, in: reel)
+        }
+        savePending()
+        saveUnreported()
+    }
+
+    /// Back online: stories watched without telling Instagram aren't sent, and their photos go
+    /// (like the ones that were sent).
+    private func dropUnreported() {
+        guard !unreported.isEmpty else { return }
+        for i in reels.indices {
+            for item in reels[i].items where unreported.contains(item.pk) { remove(item.file) }
+            reels[i].items.removeAll { unreported.contains($0.pk) }
+        }
+        unreported.removeAll()
+        saveUnreported()
+        dropEmptyReels()
+        saveManifest()
+    }
+    private func saveUnreported() { if let d = try? JSONEncoder().encode(unreported) { try? d.write(to: hiddenURL, options: .atomic) } }
 
     func isLiked(_ item: Item) -> Bool { likeChanges.first { $0.pk == item.pk }?.liked ?? (item.liked ?? false) }
 
@@ -444,6 +477,7 @@ final class OfflineStories: ObservableObject {
     func sync() { Task { await syncNow() } }
 
     func syncNow() async {
+        if !offline { dropUnreported() }
         guard !offline, !syncing, hasPending, home != nil else { return }
         syncing = true
         defer { syncing = false; pushState() }
@@ -574,7 +608,7 @@ final class OfflineStories: ObservableObject {
 
     /// The button above the story row (extras.js draws it from this).
     func pushState() {
-        let waiting = Set(pending.map(\.mediaId))
+        let waiting = Set(pending.map(\.mediaId)).union(unreported)
         var state: [String: Any] = ["offline": offline, "saved": savedCount, "toDownload": todo.count, "pending": pending.count + likeChanges.count + replies.count,
                                     "users": reels.filter { !$0.items.isEmpty }.map(\.username),
                                     // Everyone whose saved stories have all been watched: their ring goes gray.
@@ -605,6 +639,7 @@ struct OfflineStoryViewer: View {
     @State private var progress: Double = 0
     @State private var paused = false
     @State private var drag: CGFloat = 0
+    @State private var pressStart: Date?
     @State private var replyText = ""
     @State private var note: String?
     @FocusState private var typing: Bool
@@ -636,7 +671,6 @@ struct OfflineStoryViewer: View {
                     Text("This story isn't saved").foregroundStyle(.white.opacity(0.7))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                header.padding(.horizontal, 10).padding(.top, 6)
                 VStack {
                     Spacer()
                     if let note {
@@ -648,34 +682,36 @@ struct OfflineStoryViewer: View {
                     }
                     bottomBar
                 }
-                // Taps: left third back, the rest forward. Hold to pause.
-                HStack(spacing: 0) {
-                    Color.clear.contentShape(Rectangle()).frame(width: geo.size.width / 3)
-                        .onTapGesture { back() }
-                    Color.clear.contentShape(Rectangle())
-                        .onTapGesture { next() }
-                }
-                .padding(.top, 70)
-                .padding(.bottom, 90)
-                .simultaneousGesture(LongPressGesture(minimumDuration: 0.25).onChanged { _ in paused = true }
-                    .onEnded { _ in paused = false })
+                // One touch area for everything, like Instagram's: touching pauses (for as long as
+                // you hold); a quick tap goes back (left third) or forward; a sideways swipe works
+                // like a tap on that side; swiping down closes.
+                Color.clear.contentShape(Rectangle())
+                    .padding(.top, 110)
+                    .padding(.bottom, 90)
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { v in
+                            if pressStart == nil { pressStart = Date() }
+                            paused = true
+                            let dy = v.translation.height
+                            if dy > abs(v.translation.width), dy > 10 { drag = dy }
+                        }
+                        .onEnded { v in
+                            let held = Date().timeIntervalSince(pressStart ?? Date())
+                            pressStart = nil
+                            let dx = v.translation.width, dy = v.translation.height
+                            defer { paused = false }
+                            if dy > 120, dy > abs(dx) { close(); return }
+                            withAnimation(.spring()) { drag = 0 }
+                            if abs(dx) > 50, abs(dx) > abs(dy) { if dx < 0 { next() } else { back() }; return }
+                            // A tap (not a hold, not a drag).
+                            if held < 0.3, abs(dx) < 10, abs(dy) < 10 {
+                                if v.startLocation.x < geo.size.width / 3 { back() } else { next() }
+                            }
+                        })
+                // On top of the touch area, so its buttons (the eye, close) get their taps.
+                header.padding(.horizontal, 10).padding(.top, 6).zIndex(2)
             }
             .offset(y: max(0, drag))
-            // Swipe down to close; swipe left or right works like a tap on that side.
-            .gesture(DragGesture(minimumDistance: 20)
-                .onChanged { v in
-                    if v.translation.height > abs(v.translation.width) { drag = v.translation.height; paused = true }
-                }
-                .onEnded { v in
-                    let dx = v.translation.width, dy = v.translation.height
-                    if abs(dx) > abs(dy), abs(dx) > 50 {
-                        if dx < 0 { next() } else { back() }
-                        return
-                    }
-                    if dy > 120 { close(); return }
-                    withAnimation(.spring()) { drag = 0 }
-                    paused = false
-                })
         }
         .statusBarHidden()
         .onAppear {
@@ -722,6 +758,19 @@ struct OfflineStoryViewer: View {
                         }
                     }
                     Spacer()
+                    // Gray: this view will be sent to Instagram. White: it won't be.
+                    if let item {
+                        let off = store.isUnreported(item)
+                        Button {
+                            store.toggleUnreported(item, in: reel)
+                            show(off ? "This view will be sent to Instagram" : "This view won't be sent to Instagram")
+                        } label: {
+                            Image(systemName: "eye.slash").font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(off ? Color.white : Color.white.opacity(0.4))
+                                .padding(4)
+                        }
+                        .accessibilityLabel(off ? "View won't be sent" : "Don't send this view")
+                    }
                     Label("Offline", systemImage: "icloud.slash").labelStyle(.iconOnly).font(.system(size: 15)).opacity(0.8)
                     Button { close() } label: {
                         Image(systemName: "xmark").font(.system(size: 20, weight: .semibold)).padding(6)
