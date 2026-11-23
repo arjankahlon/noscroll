@@ -2140,40 +2140,94 @@
 
   // 2× speed: a small button over a big playing video (a reel a friend sent, a post's video).
   // Tap to switch between 1× and 2×; the choice holds for the rest of this page's videos.
-  var playRate = 1;
+  // Swiping between a post's photos on Instagram's own pages (Explore, profiles, shared posts):
+  // its arrows work but its swipe often doesn't in the app, so a sideways swipe presses the arrow,
+  // unless the photos already moved by themselves.
+  var swipe = null;
+  function carouselOf(t) {
+    for (var n = t; n && n !== document.body; n = n.parentElement) {
+      if (n.querySelector && n.querySelector('button[aria-label="Next"], button[aria-label="Go back"]')) return n;
+    }
+    return null;
+  }
+  function slideSpot(box) {
+    var ul = box.querySelector('ul');
+    return ul ? [].map.call(ul.children, function (li) { return Math.round(li.getBoundingClientRect().left); }).join(',') : '';
+  }
+  document.addEventListener('touchstart', function (e) {
+    swipe = null;
+    if (TAB === 'stories' || !e.touches || e.touches.length !== 1) return;
+    var t = e.target;
+    if (!t || !t.closest || t.closest('#fl-ff, [role="dialog"] video') || !t.closest('ul li')) return;
+    var box = carouselOf(t);
+    if (!box) return;
+    swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, box: box, spot: slideSpot(box), at: Date.now() };
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function (e) {
+    var sw = swipe;
+    swipe = null;
+    var t = e.changedTouches && e.changedTouches[0];
+    if (!sw || !t) return;
+    var dx = t.clientX - sw.x, dy = t.clientY - sw.y;
+    if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5 || Date.now() - sw.at > 1200) return;
+    setTimeout(function () {
+      if (slideSpot(sw.box) !== sw.spot) return;   // Instagram's own swipe worked
+      var b = sw.box.querySelector(dx < 0 ? 'button[aria-label="Next"]' : 'button[aria-label="Go back"]');
+      if (b) b.click();
+    }, 250);
+  }, true);
+
+  // Each new post or reel starts at 1×; the button always shows the speed of the video on screen.
+  var playRate = 1, ratePath = location.pathname;
+  function samePage() {
+    if (location.pathname !== ratePath) { ratePath = location.pathname; playRate = 1; }
+  }
   document.addEventListener('playing', function (e) {
     var v = e.target;
+    samePage();
     if (v && v.tagName === 'VIDEO' && v.playbackRate !== playRate) v.playbackRate = playRate;
   }, true);
+  function bigVideo() {
+    var best = null, bestH = 0;
+    [].forEach.call(document.querySelectorAll('video'), function (v) {
+      if (v.closest('#fl-ff')) return;
+      var r = v.getBoundingClientRect();
+      var top = Math.max(r.top, 80), bottom = Math.min(r.bottom, window.innerHeight - 80);
+      if (r.height > 240 && bottom - top > bestH) { best = v; bestH = bottom - top; }
+    });
+    return best;
+  }
+  function showRate(btn, rate) {
+    var two = rate > 1.5;
+    btn.textContent = two ? '2×' : '1×';
+    btn.style.background = two ? 'rgba(225,48,108,.9)' : 'rgba(0,0,0,.6)';
+  }
   function speedButtonStep() {
     var btn = document.getElementById('fl-speed');
+    samePage();
     // Not on stories (the story row, or a story open), only reels and videos.
     if (/^\/stories\//.test(location.pathname) || TAB === 'stories' && location.pathname === '/') {
       if (btn) btn.style.display = 'none';
       return;
     }
-    var big = [].some.call(document.querySelectorAll('video'), function (v) {
-      var r = v.getBoundingClientRect();
-      return r.height > 240 && r.bottom > 80 && r.top < window.innerHeight - 80 && !v.closest('#fl-ff');
-    });
+    var cur = bigVideo();
     if (!btn) {
       btn = document.createElement('button');
       btn.id = 'fl-speed';
       btn.type = 'button';
       btn.style.cssText = 'all:unset;position:fixed;right:14px;top:140px;z-index:2147483000;min-width:44px;height:32px;padding:0 12px;box-sizing:border-box;' +
         'border-radius:16px;background:rgba(0,0,0,.6);color:#fff;font:700 15px/32px -apple-system,system-ui,sans-serif;text-align:center;-webkit-tap-highlight-color:transparent';
-      var flip = function (e) {
+      btn.__flTap = function (e) {
         e.preventDefault(); e.stopPropagation();
-        playRate = playRate === 1 ? 2 : 1;
-        [].forEach.call(document.querySelectorAll('video'), function (v) { v.playbackRate = playRate; });
-        btn.textContent = playRate === 2 ? '2×' : '1×';
-        btn.style.background = playRate === 2 ? 'rgba(225,48,108,.9)' : 'rgba(0,0,0,.6)';
+        var v = bigVideo();
+        playRate = (v ? v.playbackRate : playRate) > 1.5 ? 1 : 2;
+        [].forEach.call(document.querySelectorAll('video'), function (x) { if (!x.closest('#fl-ff')) x.playbackRate = playRate; });
+        showRate(btn, playRate);
       };
-      btn.__flTap = flip;
-      btn.textContent = '1×';
       document.body.appendChild(btn);
     }
-    btn.style.display = big ? 'block' : 'none';
+    if (cur) showRate(btn, cur.playbackRate);
+    btn.style.display = cur ? 'block' : 'none';
   }
 
   // Someone's profile, their "..." menu: Instagram's "Embed" row becomes "Mute account" /
