@@ -2362,6 +2362,75 @@
     if (b && b.style.visibility !== 'hidden') b.style.setProperty('visibility', 'hidden', 'important');
   }
 
+  // A profile's picture, full screen (as in Instagram's app): hold it on any profile, or tap it
+  // when it has no story (with a story, a tap still opens the story; on your own profile, a tap
+  // still changes your photo). The picture on the page is already full size. Tap to close.
+  function headerPic() {
+    var imgs = document.querySelectorAll('main img[alt$="profile picture"]');
+    for (var i = 0; i < imgs.length; i++) {
+      var r = imgs[i].getBoundingClientRect();
+      if (r.width >= 56 && r.top < 400) return imgs[i];
+    }
+    return null;
+  }
+  function showPic(src) {
+    if (!src || document.getElementById('fl-pic')) return;
+    var box = el('div');
+    box.id = 'fl-pic';
+    var img = el('img');
+    img.src = src;
+    img.alt = '';
+    box.appendChild(img);
+    box.__flTap = function () {
+      box.classList.remove('on');
+      setTimeout(function () { box.remove(); }, 220);
+    };
+    box.onclick = box.__flTap;
+    document.body.appendChild(box);
+    requestAnimationFrame(function () { requestAnimationFrame(function () { box.classList.add('on'); }); });
+  }
+  var picPress = null;
+  document.addEventListener('touchstart', function (e) {
+    picPress = null;
+    var t = e.touches && e.touches[0];
+    if (!t || e.touches.length !== 1 || document.getElementById('fl-pic')) return;
+    var pic = headerPic();
+    if (!pic) return;
+    var r = pic.getBoundingClientRect();
+    if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) return;
+    pic.style.webkitTouchCallout = 'none';
+    var p = picPress = { x: t.clientX, y: t.clientY, pic: pic, held: false };
+    p.timer = setTimeout(function () {
+      if (picPress !== p) return;
+      p.held = true;
+      post({ type: 'haptic', value: 'tap' });
+      showPic(pic.currentSrc || pic.src);
+    }, 400);
+  }, { capture: true, passive: true });
+  document.addEventListener('touchmove', function (e) {
+    var t = e.touches && e.touches[0];
+    if (picPress && !picPress.held && t && (Math.abs(t.clientX - picPress.x) > 10 || Math.abs(t.clientY - picPress.y) > 10)) {
+      clearTimeout(picPress.timer);
+      picPress = null;
+    }
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function (e) {
+    var p = picPress;
+    picPress = null;
+    if (!p) return;
+    clearTimeout(p.timer);
+    // Held: the picture is already open; the lift shouldn't also tap the page underneath.
+    if (p.held) { e.preventDefault(); e.stopPropagation(); return; }
+    // A tap: only when the picture is just a link to this same profile (no story, not yours).
+    var a = p.pic.closest('a[href]');
+    if (!a || p.pic.closest('[role="button"],button')) return;
+    var path = function (s) { return s.replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, '').replace(/\/+$/, ''); };
+    if (path(a.getAttribute('href') || '') !== path(location.pathname)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showPic(p.pic.currentSrc || p.pic.src);
+  }, true);
+
   // The app's own floating buttons (settings icon, 2× speed): Instagram's page swallows their
   // taps, so a tap is caught on the whole document first (as for the heart).
   var ownTapStart = null;
@@ -2370,7 +2439,7 @@
     ownTapStart = t ? { x: t.clientX, y: t.clientY } : null;
   }, { capture: true, passive: true });
   document.addEventListener('touchend', function (e) {
-    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-info, #fl-speed, .fl-mute-row, #fl-confirm button, #fl-offline .btn, .fl-offitem');
+    var b = e.target && e.target.closest && e.target.closest('#fl-settings, #fl-info, #fl-speed, .fl-mute-row, #fl-confirm button, #fl-offline .btn, .fl-offitem, #fl-pic');
     var t = e.changedTouches && e.changedTouches[0];
     if (!b || !ownTapStart || !t || Math.abs(t.clientX - ownTapStart.x) > 10 || Math.abs(t.clientY - ownTapStart.y) > 10) return;
     e.preventDefault();
@@ -2431,6 +2500,10 @@
     st.textContent = [
       '#fl-confirm{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .18s}',
       '#fl-confirm.on{background:rgba(0,0,0,.4)}',
+      '#fl-pic{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0);-webkit-backdrop-filter:blur(0);backdrop-filter:blur(0);transition:background .2s,backdrop-filter .2s,-webkit-backdrop-filter .2s}',
+      '#fl-pic.on{background:rgba(0,0,0,.55);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}',
+      '#fl-pic img{width:min(78vw,360px);height:min(78vw,360px);border-radius:50%;object-fit:cover;transform:scale(.4);opacity:0;transition:transform .22s cubic-bezier(.2,.9,.3,1.15),opacity .18s;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}',
+      '#fl-pic.on img{transform:none;opacity:1}',
       '#fl-confirm .card{width:270px;background:var(--fl-sheet,#fff);border-radius:14px;overflow:hidden;text-align:center;font:400 17px/1.3 -apple-system,system-ui,sans-serif;color:var(--fl-strong);transform:scale(1.1);opacity:0;transition:transform .18s,opacity .18s}',
       '#fl-confirm.on .card{transform:none;opacity:1}',
       '#fl-confirm .msg{padding:20px 16px 18px;font-size:15px;font-weight:600}',
