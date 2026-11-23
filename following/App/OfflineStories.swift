@@ -582,7 +582,6 @@ struct OfflineStoryViewer: View {
     @State private var progress: Double = 0
     @State private var paused = false
     @State private var drag: CGFloat = 0
-    @State private var slide: CGFloat = 0
     @State private var replyText = ""
     @State private var note: String?
     @FocusState private var typing: Bool
@@ -639,32 +638,19 @@ struct OfflineStoryViewer: View {
                     .onEnded { _ in paused = false })
             }
             .offset(y: max(0, drag))
-            .offset(x: slide)
-            // Swipe down to close; swipe left or right for the next or previous person.
+            // Swipe down to close; swipe left or right works like a tap on that side.
             .gesture(DragGesture(minimumDistance: 20)
                 .onChanged { v in
-                    let dx = v.translation.width, dy = v.translation.height
-                    if abs(dx) > abs(dy) { slide = dx; drag = 0 } else if dy > 0 { drag = dy; slide = 0 }
-                    paused = true
+                    if v.translation.height > abs(v.translation.width) { drag = v.translation.height; paused = true }
                 }
                 .onEnded { v in
                     let dx = v.translation.width, dy = v.translation.height
-                    if abs(dx) > abs(dy), abs(dx) > 70 {
-                        let ok = dx < 0 ? reelIndex + 1 < reels.count : reelIndex > 0
-                        if ok {
-                            withAnimation(.easeOut(duration: 0.15)) { slide = dx < 0 ? -500 : 500 }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                dx < 0 ? nextPerson() : previousPerson()
-                                slide = dx < 0 ? 500 : -500
-                                withAnimation(.easeOut(duration: 0.2)) { slide = 0 }
-                                paused = false
-                            }
-                            return
-                        }
-                        if dx < 0 { close(); return }   // past the last person
+                    if abs(dx) > abs(dy), abs(dx) > 50 {
+                        if dx < 0 { next() } else { back() }
+                        return
                     }
-                    if dy > 120 && abs(dy) > abs(dx) { close(); return }
-                    withAnimation(.spring()) { drag = 0; slide = 0 }
+                    if dy > 120 { close(); return }
+                    withAnimation(.spring()) { drag = 0 }
                     paused = false
                 })
         }
