@@ -128,7 +128,7 @@ final class StoriesModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if self.onStoryPage != story { self.onStoryPage = story }
-                if let u = storyUser, u != "highlights", !OfflineStories.shared.offline { OfflineStories.shared.openedOnline(username: u) }
+                if let u = storyUser, u != "highlights", !OfflineStories.shared.offline { OfflineStories.shared.instagramViewerOpening(username: u) }
                 // Still on the row while a tapped post or profile starts loading: stay open.
                 if self.opening && !open { return }
                 guard self.expanded != open else { return }

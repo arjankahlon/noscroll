@@ -364,8 +364,8 @@
   var offlineState = { phase: 'idle', saved: 0, offline: false, users: [] };
   // A cloud with a download arrow (like the App Store's download icon), and once saved, the
   // download arrow in a circle.
-  var ICON_DOWN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 18.5H6.8a4.3 4.3 0 0 1-.6-8.56A6 6 0 0 1 17.8 8.6a4.95 4.95 0 0 1-.3 9.9h-1"/><path d="M12 11v9M9 17l3 3 3-3"/></svg>';
-  var ICON_SAVED = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 7v9M8.5 12.5 12 16l3.5-3.5"/></svg>';
+  var ICON_DOWN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 13v8l-4-4"/><path d="m12 21 4-4"/><path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284"/></svg>';
+  var ICON_SAVED = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="m8 12 4 4 4-4"/></svg>';
   var ICON_OFF = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.8a15 15 0 0 1 4.2-2.7M9.5 5.2A15 15 0 0 1 22 8.8M5 12.5a10 10 0 0 1 5-2.6M14.5 10.2a10 10 0 0 1 4.5 2.3M8.5 16a5 5 0 0 1 7 0M12 20h.01M3 3l18 18"/></svg>';
   function offlineButton() {
     var v = document.getElementById('fl-offline');
@@ -469,7 +469,7 @@
       html = ICON_DOWN + '<span>' + (st.message || "Couldn't load") + '</span>';
       color = '#ed4956';
     } else if (st.offline) {
-      html = ICON_OFF + '<span>' + (n ? 'Offline · ' + n + ' saved' : 'Offline') + '</span>';
+      html = ICON_OFF + '<span>' + (n ? n + ' saved' : 'Offline') + '</span>';
       color = '#e07a00';
     } else if (n) {
       html = ICON_SAVED + '<span>' + n + ' available offline</span>';

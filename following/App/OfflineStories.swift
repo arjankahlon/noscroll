@@ -107,6 +107,7 @@ final class OfflineStories: ObservableObject {
         if let d = try? Data(contentsOf: pendingURL), let p = try? JSONDecoder().decode([Seen].self, from: d) { pending = p }
         if let d = try? Data(contentsOf: likesURL), let p = try? JSONDecoder().decode([LikeChange].self, from: d) { likeChanges = p }
         if let d = try? Data(contentsOf: repliesURL), let p = try? JSONDecoder().decode([Reply].self, from: d) { replies = p }
+        if let d = try? Data(contentsOf: todoURL), let p = try? JSONDecoder().decode([Todo].self, from: d) { todo = p }
         dropExpired()
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
@@ -114,7 +115,7 @@ final class OfflineStories: ObservableObject {
         }
         monitor.start(queue: DispatchQueue(label: "following.offline.path"))
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.dropExpired(); self?.sync() }
+            Task { @MainActor in self?.dropExpired(); self?.sync(); await self?.runTodo() }
         }
         // Leaving the app with something still to send: keep going for the time iOS allows, and
         // ask iOS to wake the app later to finish (phase 4).
@@ -125,13 +126,68 @@ final class OfflineStories: ObservableObject {
 
     private func pathChanged(_ online: Bool) {
         realOnline = online
-        var off = !online
+        if !online { noSignal = false }   // iOS knows it's offline: no need to guess
+        refresh()
+    }
+
+    private func refresh() {
+        var off = !realOnline || noSignal
         #if DEBUG
         if forceOffline { off = true }
         #endif
         if off != offline { offline = off }
         pushState()
-        if !off { sync() }
+        if !off { sync(); Task { await runTodo() } }
+    }
+
+    // MARK: "1 bar, no signal"
+
+    /// iOS says there's a connection, but nothing gets through (a bar or two in the subway).
+    /// Treated as offline until a check gets an answer again.
+    private var noSignal = false
+    private var probeTimer: Timer?
+
+    /// Can anything reach Instagram right now? Any answer at all counts; nothing within a couple
+    /// of seconds doesn't.
+    func probe() async -> Bool {
+        var req = URLRequest(url: URL(string: "https://www.instagram.com/favicon.ico")!)
+        req.httpMethod = "HEAD"
+        req.timeoutInterval = 2.5
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        do { _ = try await URLSession.shared.data(for: req); return true } catch { return false }
+    }
+
+    private func lostSignal() {
+        guard !noSignal else { return }
+        noSignal = true
+        refresh()
+        probeTimer?.invalidate()
+        probeTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.noSignal, await self.probe() else { return }
+                self.noSignal = false
+                self.probeTimer?.invalidate()
+                self.probeTimer = nil
+                self.refresh()
+            }
+        }
+    }
+
+    /// Someone's stories are opening in Instagram's own viewer. If they're saved here, check the
+    /// connection: if nothing gets through, go back to the row and open the saved copy instead
+    /// (and switch to offline mode). If it works, the saved copies aren't needed any more.
+    func instagramViewerOpening(username: String) {
+        guard !offline else { return }
+        guard has(username: username) else { openedOnline(username: username); return }
+        Task {
+            if await probe() {
+                openedOnline(username: username)
+            } else {
+                lostSignal()
+                strip?.webView.evaluateJavaScript("history.back()", completionHandler: nil)
+                viewerStart = username
+            }
+        }
     }
 
     // MARK: Loading
@@ -141,11 +197,11 @@ final class OfflineStories: ObservableObject {
     /// The button above the story row. Offline: open the saved stories. Online with stories
     /// saved ("62 available offline"): clear them. Otherwise: load them.
     func buttonTapped() {
-        if case .loading = phase { return }
         if offline {
             if savedCount > 0 { viewerStart = reels.first?.username }
             return
         }
+        if case .loading = phase { return }
         if savedCount > 0 { clearAll(); return }
         Task { await load() }
     }
@@ -153,6 +209,8 @@ final class OfflineStories: ObservableObject {
     /// Delete every saved story, except ones watched offline that Instagram hasn't heard about
     /// yet (they go once they're sent).
     func clearAll() {
+        todo.removeAll()
+        saveTodo()
         let waiting = Set(pending.map(\.mediaId))
         for i in reels.indices {
             for item in reels[i].items where !waiting.contains(item.pk) { remove(item.file) }
@@ -164,8 +222,22 @@ final class OfflineStories: ObservableObject {
         sync()
     }
 
+    /// One photo still to download (kept on the phone, so a download cut off by losing signal
+    /// carries on by itself once the connection is back).
+    struct Todo: Codable, Equatable {
+        let reelId: String
+        let userId: String
+        let username: String
+        let pic: String?
+        let item: Item
+        let url: String
+    }
+    @Published private(set) var todo: [Todo] = []
+    private var downloading = false
+    private var todoURL: URL { folder.appendingPathComponent("todo.json") }
+
     func load() async {
-        guard let strip else { return }
+        guard let strip, !downloading else { return }
         phase = .loading(done: 0, total: 0)
         pushState()
         let js = "return await window.__flOfflineList()"
@@ -175,48 +247,67 @@ final class OfflineStories: ObservableObject {
         guard let s = raw as? String, let data = s.data(using: .utf8),
               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { fail("Couldn't load stories"); return }
 
-        // What's new: skip anything already saved.
-        let have = Set(reels.flatMap { $0.items.map(\.id) })
-        var jobs: [(reel: Reel, items: [(Item, URL)], pic: URL?)] = []
+        // What's new: skip anything already saved or already waiting.
+        let have = Set(reels.flatMap { $0.items.map(\.id) } + todo.map(\.item.id))
         for r in list {
             guard let id = r["reelId"] as? String, let uid = r["userId"] as? String, let name = r["username"] as? String,
                   let its = r["items"] as? [[String: Any]] else { continue }
-            var items: [(Item, URL)] = []
             for i in its {
-                guard let mid = i["id"] as? String, !have.contains(mid), let u = i["url"] as? String, let url = URL(string: u) else { continue }
+                guard let mid = i["id"] as? String, !have.contains(mid), let u = i["url"] as? String else { continue }
                 let pk = i["pk"] as? String ?? mid
                 let item = Item(id: mid, pk: pk, takenAt: i["takenAt"] as? Int ?? 0, expiresAt: i["expiresAt"] as? Int ?? 0,
                                 file: "\(pk).jpg", width: i["w"] as? Int ?? 1080, height: i["h"] as? Int ?? 1920,
                                 music: i["music"] as? String, liked: i["liked"] as? Bool)
-                items.append((item, url))
+                todo.append(Todo(reelId: id, userId: uid, username: name, pic: r["pic"] as? String, item: item, url: u))
             }
-            if items.isEmpty { continue }
-            jobs.append((Reel(id: id, userId: uid, username: name, picFile: nil, items: []), items,
-                         (r["pic"] as? String).flatMap(URL.init(string:))))
         }
-        let total = jobs.reduce(0) { $0 + $1.items.count }
+        saveTodo()
+        await runTodo()
+    }
+
+    /// Download what's waiting, one photo at a time; each is watchable offline as soon as it's in.
+    /// Losing signal stops it (what's left waits); it picks up again when the connection is back.
+    func runTodo() async {
+        guard !downloading, !todo.isEmpty else {
+            if case .loading = phase, !downloading { phase = .idle; pushState() }
+            return
+        }
+        downloading = true
+        defer { downloading = false }
+        let total = todo.count
         var done = 0
         phase = .loading(done: 0, total: total)
         pushState()
-        for job in jobs {
-            var reel = reels.first(where: { $0.id == job.reel.id }) ?? job.reel
-            if reel.picFile == nil, let pic = job.pic, await download(pic, to: "pic_\(reel.userId).jpg") {
-                reel.picFile = "pic_\(reel.userId).jpg"
+        while let t = todo.first, !offline {
+            let now = Int(Date().timeIntervalSince1970)
+            var ok = false
+            if t.item.expiresAt == 0 || t.item.expiresAt > now, let url = URL(string: t.url) {
+                ok = await download(url, to: t.item.file)
             }
-            for (item, url) in job.items {
-                if await download(url, to: item.file) { reel.items.append(item) }
-                done += 1
-                phase = .loading(done: done, total: total)
-                pushState()
+            if !ok && !offline, !(await probe()) { lostSignal() }
+            if !ok && offline { break }   // signal lost mid-download: try this one again later
+            if ok {
+                var reel = reels.first(where: { $0.id == t.reelId })
+                    ?? Reel(id: t.reelId, userId: t.userId, username: t.username, picFile: nil, items: [])
+                if reel.picFile == nil, let p = t.pic, let pic = URL(string: p), await download(pic, to: "pic_\(t.userId).jpg") {
+                    reel.picFile = "pic_\(t.userId).jpg"
+                }
+                if !reel.items.contains(where: { $0.id == t.item.id }) { reel.items.append(t.item) }
+                reel.items.sort { $0.takenAt < $1.takenAt }
+                if let i = reels.firstIndex(where: { $0.id == reel.id }) { reels[i] = reel } else { reels.append(reel) }
+                saveManifest()
             }
-            reel.items.sort { $0.takenAt < $1.takenAt }
-            if let i = reels.firstIndex(where: { $0.id == reel.id }) { reels[i] = reel }
-            else if !reel.items.isEmpty { reels.append(reel) }
-            saveManifest()
+            todo.removeFirst()
+            saveTodo()
+            done += 1
+            phase = .loading(done: done, total: total)
+            pushState()
         }
         phase = .idle
         pushState()
     }
+
+    private func saveTodo() { if let d = try? JSONEncoder().encode(todo) { try? d.write(to: todoURL, options: .atomic) } }
 
     private func fail(_ message: String) {
         phase = .failed(message)
@@ -230,7 +321,9 @@ final class OfflineStories: ObservableObject {
 
     private func download(_ url: URL, to name: String) async -> Bool {
         do {
-            let (data, resp) = try await URLSession.shared.data(from: url)
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 15   // don't hang for a minute when the signal goes
+            let (data, resp) = try await URLSession.shared.data(for: req)
             guard (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return false }
             try data.write(to: folder.appendingPathComponent(name), options: .atomic)
             return true
@@ -460,7 +553,7 @@ final class OfflineStories: ObservableObject {
     /// The button above the story row (extras.js draws it from this).
     func pushState() {
         let waiting = Set(pending.map(\.mediaId))
-        var state: [String: Any] = ["offline": offline, "saved": savedCount, "pending": pending.count + likeChanges.count + replies.count,
+        var state: [String: Any] = ["offline": offline, "saved": savedCount, "toDownload": todo.count, "pending": pending.count + likeChanges.count + replies.count,
                                     "users": reels.filter { !$0.items.isEmpty }.map(\.username),
                                     // Everyone whose saved stories have all been watched: their ring goes gray.
                                     // Anyone with at least one story watched offline counts as seen in the count.
