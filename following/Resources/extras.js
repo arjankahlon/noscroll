@@ -470,7 +470,7 @@
       html = ICON_OFF + '<span>' + (n ? 'Offline · ' + n + ' saved' : 'Offline') + '</span>';
       color = '#e07a00';
     } else if (n) {
-      html = ICON_SAVED + '<span>' + n + ' saved</span>';
+      html = ICON_SAVED + '<span>' + n + ' available offline</span>';
       color = '#1f9d55';
     } else {
       html = ICON_DOWN + '<span>Load all stories</span>';
