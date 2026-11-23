@@ -671,6 +671,7 @@ struct OfflineStoryViewer: View {
         else if reelIndex + 1 < reels.count { reelIndex += 1; itemIndex = 0 }
         else { return close() }
         progress = 0
+        paused = false   // a quick tap starts "hold to pause" without ending it
         markWatched()
     }
 
@@ -680,6 +681,7 @@ struct OfflineStoryViewer: View {
         reelIndex += 1
         itemIndex = reels[reelIndex].items.firstIndex(where: { !store.isWatched($0) }) ?? 0
         progress = 0
+        paused = false   // a quick tap starts "hold to pause" without ending it
         markWatched()
     }
 
@@ -688,6 +690,7 @@ struct OfflineStoryViewer: View {
         reelIndex -= 1
         itemIndex = reels[reelIndex].items.firstIndex(where: { !store.isWatched($0) }) ?? 0
         progress = 0
+        paused = false   // a quick tap starts "hold to pause" without ending it
         markWatched()
     }
 
@@ -695,6 +698,7 @@ struct OfflineStoryViewer: View {
         if itemIndex > 0 { itemIndex -= 1 }
         else if reelIndex > 0 { reelIndex -= 1; itemIndex = max(0, reels[reelIndex].items.count - 1) }
         progress = 0
+        paused = false   // a quick tap starts "hold to pause" without ending it
     }
 
     private func close() {

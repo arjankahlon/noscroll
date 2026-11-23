@@ -411,7 +411,15 @@
     saved.forEach(function (n) { if (!savedUsers.some(function (u) { return u.username === n; })) savedUsers.push({ username: n }); });
     savedUsers.forEach(function (u) { if (watched.indexOf(u.username) === -1) people.push(u); });
     savedUsers.forEach(function (u) { if (watched.indexOf(u.username) !== -1) people.push(u); });
-    tray.forEach(function (r) { var u = r.user || {}; if (saved.indexOf(u.username) === -1) people.push(u); });
+    // Not saved: either only videos (still unseen), or already seen before going offline (last,
+    // like Instagram's seen ones, with a gray ring and no video mark).
+    var seenBefore = {};
+    tray.forEach(function (r) {
+      var u = r.user || {};
+      if (saved.indexOf(u.username) !== -1) return;
+      if (r.seen && r.seen >= r.latest_reel_media) seenBefore[u.username] = true; else people.push(u);
+    });
+    tray.forEach(function (r) { var u = r.user || {}; if (seenBefore[u.username]) people.push(u); });
     var key = JSON.stringify([saved, watched, people.length]);
     if (row && row.__key === key) return;
     if (!row) {
@@ -427,10 +435,11 @@
       var has = saved.indexOf(u.username) !== -1, done = watched.indexOf(u.username) !== -1;
       var it = document.createElement('div');
       it.className = 'fl-offitem';
-      it.style.cssText = 'flex:none;width:102px;display:flex;flex-direction:column;align-items:center;padding-top:5px;' + (has ? '' : 'opacity:.35;');
+      var before = !!seenBefore[u.username];
+      it.style.cssText = 'flex:none;width:102px;display:flex;flex-direction:column;align-items:center;padding-top:5px;' + (has ? '' : before ? 'opacity:.55;' : 'opacity:.35;');
       var ring = document.createElement('div');
       ring.style.cssText = 'width:89px;height:89px;border-radius:50%;box-sizing:border-box;padding:' + (has && !done ? '3px' : '2px') + ';background:' +
-        (has && !done ? 'linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5)' : '#c7c7c7');
+        (has && !done ? 'linear-gradient(to top right,#FFD600 0%,#FF7A00 28%,#FF0069 58%,#D300C5 100%)' : '#c7c7c7');
       var inner = document.createElement('div');
       inner.style.cssText = 'width:100%;height:100%;border-radius:50%;padding:3px;box-sizing:border-box;background:' + row.style.background;
       var img = document.createElement('div');
@@ -440,7 +449,7 @@
       ring.appendChild(inner);
       it.appendChild(ring);
       var name = document.createElement('div');
-      name.textContent = (has ? '' : '▶︎ ') + (u.username || '');
+      name.textContent = (has || before ? '' : '▶︎ ') + (u.username || '');
       name.style.cssText = 'margin-top:6px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/16px -apple-system,system-ui,sans-serif;color:var(--fl-strong)';
       it.appendChild(name);
       if (has) it.__flTap = function () { post({ type: 'openOffline', value: u.username }); };
