@@ -3,11 +3,14 @@ import UIKit
 import Network
 import WebKit
 import BackgroundTasks
+import AVFoundation
 
 /// "Load all stories": for a stretch without signal (the subway).
 ///
-/// Tapping the button above the story row downloads every photo story you haven't watched yet
-/// (videos are left alone: not downloaded, not watched, still unseen in the row). Loading them
+/// Tapping the button above the story row downloads the stories you haven't watched yet from
+/// everyone with at least one unwatched photo story of their own: all of theirs, including videos
+/// (downloaded last) and stories that share a post. People with only videos or shared posts are
+/// left alone (not downloaded, not watched, still unseen in the row). Loading them
 /// doesn't tell Instagram anything: only watching does. While offline, tapping someone in the
 /// story row opens these copies in the app's own viewer, and each one you watch is written down
 /// (on the phone, so it survives the app being closed). Back online, the app tells Instagram,
@@ -28,6 +31,9 @@ final class OfflineStories: ObservableObject {
         let height: Int
         let music: String?      // "Song · Artist", shown without audio
         var liked: Bool?        // already liked when it was loaded
+        var video: Bool? = nil  // a video story (saved as .mp4, played with its sound)
+        var duration: Double? = nil
+        var isVideo: Bool { video ?? false }
     }
     struct Reel: Codable, Identifiable, Equatable {
         let id: String          // reel id (the owner's id)
@@ -275,20 +281,28 @@ final class OfflineStories: ObservableObject {
         guard let s = raw as? String, let data = s.data(using: .utf8),
               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { fail("Couldn't load stories"); return }
 
-        // What's new: skip anything already saved or already waiting.
+        // What's new: skip anything already saved or already waiting. Photos go in the queue
+        // first, everyone's videos after them (they're bigger: the photos are watchable sooner).
         let have = Set(reels.flatMap { $0.items.map(\.id) } + todo.map(\.item.id))
+        var videos: [Todo] = []
         for r in list {
             guard let id = r["reelId"] as? String, let uid = r["userId"] as? String, let name = r["username"] as? String,
                   let its = r["items"] as? [[String: Any]] else { continue }
             for i in its {
                 guard let mid = i["id"] as? String, !have.contains(mid), let u = i["url"] as? String else { continue }
                 let pk = i["pk"] as? String ?? mid
+                let isVideo = i["video"] as? Bool ?? false
                 let item = Item(id: mid, pk: pk, takenAt: i["takenAt"] as? Int ?? 0, expiresAt: i["expiresAt"] as? Int ?? 0,
-                                file: "\(pk).jpg", width: i["w"] as? Int ?? 1080, height: i["h"] as? Int ?? 1920,
-                                music: i["music"] as? String, liked: i["liked"] as? Bool)
-                todo.append(Todo(reelId: id, userId: uid, username: name, pic: r["pic"] as? String, item: item, url: u))
+                                file: "\(pk).\(isVideo ? "mp4" : "jpg")", width: i["w"] as? Int ?? 1080, height: i["h"] as? Int ?? 1920,
+                                music: i["music"] as? String, liked: i["liked"] as? Bool,
+                                video: isVideo ? true : nil, duration: isVideo ? (i["duration"] as? Double) : nil)
+                let t = Todo(reelId: id, userId: uid, username: name, pic: r["pic"] as? String, item: item, url: u)
+                if isVideo { videos.append(t) } else { todo.append(t) }
             }
         }
+        // Videos already waiting from an earlier tap stay behind the new photos too.
+        let waitingVideos = todo.filter { $0.item.isVideo }
+        todo = todo.filter { !$0.item.isVideo } + waitingVideos + videos
         saveTodo()
         await runTodo()
     }
@@ -356,6 +370,13 @@ final class OfflineStories: ObservableObject {
             try data.write(to: folder.appendingPathComponent(name), options: .atomic)
             return true
         } catch { return false }
+    }
+
+    /// A saved file (a video story), if it's there.
+    func fileURL(_ file: String?) -> URL? {
+        guard let file else { return nil }
+        let u = folder.appendingPathComponent(file)
+        return FileManager.default.fileExists(atPath: u.path) ? u : nil
     }
 
     func image(_ file: String?) -> UIImage? {
@@ -641,6 +662,15 @@ final class OfflineStories: ObservableObject {
         case .failed(let m): state["phase"] = "failed"; state["message"] = m
         }
         state["icons"] = Self.icons
+        // Offline, Instagram's own profile pictures can't load: the saved copies, for the row.
+        if offline {
+            var pics: [String: String] = [:]
+            for r in reels where !r.items.isEmpty {
+                guard let f = r.picFile, let d = try? Data(contentsOf: folder.appendingPathComponent(f)) else { continue }
+                pics[r.username] = "data:image/jpeg;base64," + d.base64EncodedString()
+            }
+            state["pics"] = pics
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: state), let json = String(data: data, encoding: .utf8) else { return }
         strip?.webView.evaluateJavaScript("window.__flOfflineState && window.__flOfflineState(\(json))", completionHandler: nil)
     }
@@ -663,6 +693,7 @@ struct OfflineStoryViewer: View {
     @State private var replyText = ""
     @State private var note: String?
     @FocusState private var typing: Bool
+    @StateObject private var vid = StoryVideo()
     private let duration: Double = 5
     private let tick = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
 
@@ -679,7 +710,10 @@ struct OfflineStoryViewer: View {
                 // the keyboard: it stays put while typing, and never pushes the reply box off screen.
                 Color.black
                     .overlay {
-                        if let item, let img = store.image(item.file) {
+                        if let item, item.isVideo, store.fileURL(item.file) != nil {
+                            StoryVideoView(player: vid.player)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                        } else if let item, let img = store.image(item.file) {
                             Image(uiImage: img)
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
@@ -687,7 +721,7 @@ struct OfflineStoryViewer: View {
                         }
                     }
                     .ignoresSafeArea()
-                if item.map({ store.image($0.file) == nil }) ?? true {
+                if item.map({ $0.isVideo ? store.fileURL($0.file) == nil : store.image($0.file) == nil }) ?? true {
                     Text("This story isn't saved").foregroundStyle(.white.opacity(0.7))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -745,10 +779,22 @@ struct OfflineStoryViewer: View {
             markWatched()
         }
         .onReceive(tick) { _ in
+            // A video plays itself (with its sound), paused along with the story; its own
+            // length sets the pace of the bar.
+            if let item, item.isVideo, let url = store.fileURL(item.file) {
+                vid.show(url)
+                guard !paused else { vid.player.pause(); return }
+                vid.player.play()
+                progress = vid.fraction
+                if vid.ended { next() }
+                return
+            }
+            vid.show(nil)
             guard !paused, item != nil else { return }
             progress += 0.05 / duration
             if progress >= 1 { next() }
         }
+        .onDisappear { vid.show(nil) }
     }
 
     private var header: some View {
@@ -863,6 +909,7 @@ struct OfflineStoryViewer: View {
         else if reelIndex + 1 < reels.count { reelIndex += 1; itemIndex = 0 }
         else { return close() }
         progress = 0
+        vid.restart()
         paused = false   // a quick tap starts "hold to pause" without ending it
         markWatched()
     }
@@ -873,6 +920,7 @@ struct OfflineStoryViewer: View {
         reelIndex += 1
         itemIndex = reels[reelIndex].items.firstIndex(where: { !store.isWatched($0) }) ?? 0
         progress = 0
+        vid.restart()
         paused = false   // a quick tap starts "hold to pause" without ending it
         markWatched()
     }
@@ -882,6 +930,7 @@ struct OfflineStoryViewer: View {
         reelIndex -= 1
         itemIndex = reels[reelIndex].items.firstIndex(where: { !store.isWatched($0) }) ?? 0
         progress = 0
+        vid.restart()
         paused = false   // a quick tap starts "hold to pause" without ending it
         markWatched()
     }
@@ -890,10 +939,58 @@ struct OfflineStoryViewer: View {
         if itemIndex > 0 { itemIndex -= 1 }
         else if reelIndex > 0 { reelIndex -= 1; itemIndex = max(0, reels[reelIndex].items.count - 1) }
         progress = 0
+        vid.restart()
         paused = false   // a quick tap starts "hold to pause" without ending it
     }
 
     private func close() {
         dismiss()
     }
+}
+
+/// The video story on screen in the offline viewer (one player, given each video in turn).
+@MainActor
+final class StoryVideo: ObservableObject {
+    let player = AVPlayer()
+    private var file: URL?
+
+    /// Play this file (from the start if it's new); nil stops.
+    func show(_ url: URL?) {
+        guard url != file else { return }
+        file = url
+        player.pause()
+        player.replaceCurrentItem(with: url.map { AVPlayerItem(url: $0) })
+    }
+    /// The same story again (back on it, or moved on and back): start over.
+    func restart() {
+        file = nil
+    }
+    private var length: Double {
+        guard let d = player.currentItem?.duration, d.isNumeric else { return 0 }
+        return d.seconds
+    }
+    var fraction: Double {
+        let l = length
+        return l > 0 ? min(1, max(0, player.currentTime().seconds / l)) : 0
+    }
+    var ended: Bool {
+        let l = length
+        return l > 0 && player.currentTime().seconds >= l - 0.05
+    }
+}
+
+struct StoryVideoView: UIViewRepresentable {
+    let player: AVPlayer
+    final class PlayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+    }
+    func makeUIView(context: Context) -> PlayerView {
+        let v = PlayerView()
+        let layer = v.layer as! AVPlayerLayer
+        layer.player = player
+        layer.videoGravity = .resizeAspect
+        v.backgroundColor = .clear
+        return v
+    }
+    func updateUIView(_ uiView: PlayerView, context: Context) {}
 }

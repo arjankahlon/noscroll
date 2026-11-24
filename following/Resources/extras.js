@@ -407,6 +407,8 @@
   // Offline: the app's own copy of the story row (Instagram's only shows a few people at a
   // time and can't be reordered): people with saved stories first, in the usual order, then
   // everyone with only videos (not saved), dimmed. Tapping someone saved opens the viewer.
+  // Instagram's repost icon (its "Repost" button).
+  var REPOST_PATH = 'M19.998 9.497a1 1 0 0 0-1 1v4.228a3.274 3.274 0 0 1-3.27 3.27h-5.313l1.791-1.787a1 1 0 0 0-1.412-1.416L7.29 18.287a1.004 1.004 0 0 0-.294.707v.001c0 .023.012.042.013.065a.923.923 0 0 0 .281.643l3.502 3.504a1 1 0 0 0 1.414-1.414l-1.797-1.798h5.318a5.276 5.276 0 0 0 5.27-5.27v-4.228a1 1 0 0 0-1-1Zm-6.41-3.496-1.795 1.795a1 1 0 1 0 1.414 1.414l3.5-3.5a1.003 1.003 0 0 0 0-1.417l-3.5-3.5a1 1 0 0 0-1.414 1.414l1.794 1.794H8.27A5.277 5.277 0 0 0 3 9.271V13.5a1 1 0 0 0 2 0V9.271a3.275 3.275 0 0 1 3.271-3.27Z';
   function offlineRow() {
     var row = document.getElementById('fl-offrow');
     var st = offlineState;
@@ -423,16 +425,21 @@
     saved.forEach(function (n) { if (!savedUsers.some(function (u) { return u.username === n; })) savedUsers.push({ username: n }); });
     savedUsers.forEach(function (u) { if (watched.indexOf(u.username) === -1) people.push(u); });
     savedUsers.forEach(function (u) { if (watched.indexOf(u.username) !== -1) people.push(u); });
-    // Not saved: either only videos (still unseen), or already seen before going offline (last,
-    // like Instagram's seen ones, with a gray ring and no video mark).
-    var seenBefore = {};
+    // Not saved: still unseen, but only shared posts (repost mark) or videos (play mark), the
+    // shared-post ones first; then people already seen before going offline (last, like
+    // Instagram's seen ones, with a gray ring and no mark).
+    var skipKinds = {};
+    try { skipKinds = JSON.parse(localStorage.getItem('following.offSkip') || '{}') || {}; } catch (e) {}
+    var seenBefore = {}, onlyPosts = [], onlyVideos = [];
     tray.forEach(function (r) {
       var u = r.user || {};
       if (saved.indexOf(u.username) !== -1) return;
-      if (r.seen && r.seen >= r.latest_reel_media) seenBefore[u.username] = true; else people.push(u);
+      if (r.seen && r.seen >= r.latest_reel_media) seenBefore[u.username] = true;
+      else (skipKinds[u.username] === 'post' ? onlyPosts : onlyVideos).push(u);
     });
+    people = people.concat(onlyPosts, onlyVideos);
     tray.forEach(function (r) { var u = r.user || {}; if (seenBefore[u.username]) people.push(u); });
-    var key = JSON.stringify([saved, watched, people.length]);
+    var key = JSON.stringify([saved, watched, people.length, Object.keys(st.pics || {}).length]);
     if (row && row.__key === key) return;
     if (!row) {
       row = document.createElement('div');
@@ -455,13 +462,20 @@
       var inner = document.createElement('div');
       inner.style.cssText = 'width:100%;height:100%;border-radius:50%;padding:3px;box-sizing:border-box;background:' + row.style.background;
       var img = document.createElement('div');
+      // The saved picture first (Instagram's can't load offline), then Instagram's.
+      var picUrl = (st.pics || {})[u.username] || u.profile_pic_url;
       img.style.cssText = 'width:100%;height:100%;border-radius:50%;background:#dbdbdb center/cover no-repeat' +
-        (u.profile_pic_url ? ';background-image:url("' + u.profile_pic_url + '")' : '');
+        (picUrl ? ';background-image:url("' + picUrl + '")' : '');
       inner.appendChild(img);
       ring.appendChild(inner);
       it.appendChild(ring);
       var name = document.createElement('div');
-      name.textContent = (has || before ? '' : '▶︎ ') + (u.username || '');
+      // Nothing saved (and not seen before): a play mark for videos, the repost mark when
+      // their stories share posts.
+      if (!has && !before && skipKinds[u.username] === 'post') {
+        name.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="' + REPOST_PATH + '"/></svg>';
+        name.appendChild(document.createTextNode(u.username || ''));
+      } else name.textContent = (has || before ? '' : '▶︎ ') + (u.username || '');
       name.style.cssText = 'margin-top:6px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/16px -apple-system,system-ui,sans-serif;color:var(--fl-strong)';
       it.appendChild(name);
       if (has) it.__flTap = function () { post({ type: 'openOffline', value: u.username }); };
@@ -560,7 +574,7 @@
     var tray = (window.__flTray || []).filter(function (r) {
       return String((r.user || {}).pk) !== me && !(r.seen >= r.latest_reel_media);
     });
-    var out = [];
+    var out = [], skipKind = {};
     for (var i = 0; i < tray.length; i += 20) {
       var ids = tray.slice(i, i + 20).map(function (r) { return String(r.id); });
       var d = await gqlRequest('PolarisStoriesV3ReelPageStandaloneQuery', '39989351314045574', {
@@ -570,18 +584,32 @@
       rs.forEach(function (r) {
         var t = tray.filter(function (x) { return String(x.id) === String(r.id); })[0] || {};
         var u = r.user && r.user.username ? r.user : (t.user || {});
-        var items = (r.items || []).filter(function (it) { return it.media_type === 1 && !(r.seen >= it.taken_at); })
+        // Who gets saved: anyone with at least one unwatched photo story of their own (not a
+        // video, and not one that shares a post or reel: story_feed_media, the post's card).
+        // For them, everything unwatched is saved: photos, shared posts and videos (videos go
+        // to the end of the download queue). Why someone else has nothing saved is remembered
+        // for the row (a play mark for videos, a repost mark for shared posts).
+        var unseen = (r.items || []).filter(function (it) { return !(r.seen >= it.taken_at); });
+        var shared = function (it) { return (it.story_feed_media || []).length > 0; };
+        var eligible = unseen.some(function (it) { return it.media_type === 1 && !shared(it); });
+        var name0 = (r.user && r.user.username) || ((t.user || {}).username) || '';
+        if (name0) skipKind[name0] = eligible ? '' : unseen.some(function (it) { return it.media_type !== 1 && !shared(it); }) ? 'video' :
+          unseen.some(shared) ? 'post' : '';
+        var items = (eligible ? unseen : [])
           .map(function (it) {
             var c = ((it.image_versions2 || {}).candidates || [])[0] || {};
+            var v = it.media_type === 2 ? ((it.video_versions || [])[0] || {}) : null;
             var mu = ((it.story_music_stickers || [])[0] || {}).music_asset_info;
             return { id: String(it.id), pk: String(it.pk), takenAt: it.taken_at || 0, expiresAt: it.expiring_at || 0,
-              url: c.url || '', w: c.width || 1080, h: c.height || 1920, liked: !!it.has_liked,
-              music: mu && mu.title ? mu.title + (mu.display_artist ? ' · ' + mu.display_artist : '') : null };
+              url: v ? (v.url || '') : (c.url || ''), video: !!v, duration: v ? (it.video_duration || 0) : 0,
+              w: c.width || 1080, h: c.height || 1920, liked: !!it.has_liked,
+              music: !v && mu && mu.title ? mu.title + (mu.display_artist ? ' · ' + mu.display_artist : '') : null };
           }).filter(function (it) { return it.url; });
         if (items.length) out.push({ reelId: String(r.id), userId: String(u.pk || u.id || r.id), username: u.username || '',
           pic: u.profile_pic_url || '', items: items });
       });
     }
+    try { localStorage.setItem('following.offSkip', JSON.stringify(skipKind)); } catch (e) {}
     return JSON.stringify(out);
   };
 
@@ -2256,7 +2284,9 @@
     if (links.length >= 6) {
       var sixth = links[5].closest('li') || links[5];
       var left = sixth.getBoundingClientRect().left;
-      if (left > 0 && Math.abs(left - window.innerWidth) > 1) {
+      var stuckRow = main.style.zoom && main.__flLastLeft === left;   // as for the picture below
+      main.__flLastLeft = left;
+      if (!stuckRow && left > 0 && Math.abs(left - window.innerWidth) > 1) {
         // Positions grow in step with the zoom, so one step lands it (a second pass tidies up).
         zoom = Math.max(1, Math.min(1.4, zoom * window.innerWidth / left));
         main.style.zoom = String(Math.round(zoom * 1000) / 1000);
@@ -2333,9 +2363,15 @@
       }
       var b = pic.__flBox;
       var w = pic.getBoundingClientRect().width;
-      if (b && w > 0 && Math.abs(w - PIC_SIZE) > 0.5) {
+      // Some Safari builds report the size without the zoom: if the size didn't change after
+      // the last adjustment, stop (otherwise the picture grows every second).
+      var stuck = b && b.style.zoom && b.__flLastW === w;
+      if (b) b.__flLastW = w;
+      if (b && !stuck && w > 0 && Math.abs(w - PIC_SIZE) > 0.5) {
         var pz = parseFloat(b.style.zoom) || 1;
-        b.style.zoom = String(Math.round(pz * PIC_SIZE / w * 1000) / 1000);
+        // Never more than 1.5× (or under 0.6×), whatever the measurement says.
+        var nz = Math.max(0.6, Math.min(1.5, pz * PIC_SIZE / w));
+        b.style.zoom = String(Math.round(nz * 1000) / 1000);
       }
 
     }

@@ -219,6 +219,13 @@
           "defaultEnabled": true,
           "source": "Following: Instagram's \"Use the app\" strip flashed for a moment on every refresh before the page script hid it; this hides it before it's drawn."
         },
+        "ig-tab-bar": {
+          "kind": "style",
+          "label": "Hide Instagram's own tab bar",
+          "css": "div:has(a[href='/explore/']):has(a[href='/reels/']):has(a[href='/direct/inbox/']):not(:has(main)):not(:has([role='dialog'])) { display: none !important; }",
+          "defaultEnabled": true,
+          "source": "Following: extras.js hides Instagram's bottom bar once the page has drawn, so it showed above the app's own tab bar while Explore loaded. The strip with Explore, Reels and Messages links together is that bar; this hides it before it's drawn."
+        },
         "threads-links": {
           "kind": "style",
           "label": "Hide Threads links",
