@@ -124,6 +124,26 @@ final class OfflineStories: ObservableObject {
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.appBackgrounded() }
         }
+        // Force-closed (swiped away in the app switcher): delete the saved photos. iOS only says
+        // so while the app is still running; once it's asleep in the background it's closed
+        // without a word (just as when iOS frees memory), and the photos stay.
+        NotificationCenter.default.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.clearForQuit() }
+        }
+    }
+
+    /// clearAll, done at once as the app closes: photos go, except ones watched offline that
+    /// Instagram hasn't heard about yet (they're still sent next time).
+    private func clearForQuit() {
+        todo.removeAll()
+        saveTodo()
+        let waiting = Set(pending.map(\.mediaId))
+        for i in reels.indices {
+            for item in reels[i].items where !waiting.contains(item.pk) { remove(item.file) }
+            reels[i].items.removeAll { !waiting.contains($0.pk) }
+        }
+        dropEmptyReels()
+        saveManifest()
     }
 
     private func pathChanged(_ online: Bool) {

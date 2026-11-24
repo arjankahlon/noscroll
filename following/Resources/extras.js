@@ -60,7 +60,7 @@
     // lead to its home page) the tab goes back to its own start page instead.
     location.replace(TAB_START[TAB] || '/?variant=following');
   }
-  var TAB_START = { search: '/explore/search/', messages: '/direct/inbox/', profile: '/?following_profile=1' };
+  var TAB_START = { search: S('explorePage') ? '/explore/' : '/explore/search/', messages: '/direct/inbox/', profile: '/?following_profile=1' };
 
   // Instagram's Back button goes to its home page when the page was opened directly (no earlier
   // page it knows of). Outside Home, Back goes back to the page before instead, as expected.
@@ -755,6 +755,8 @@
       '#fl-ff .slide{position:relative}',
       '#fl-ff .pip{all:unset;position:absolute;top:10px;left:10px;width:34px;height:34px;border-radius:17px;background:rgba(18,18,18,.6);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}',
       '#fl-ff .pip svg{width:20px;height:20px}',
+      '#fl-ff .spd{all:unset;position:absolute;top:10px;right:10px;min-width:44px;height:32px;padding:0 12px;box-sizing:border-box;border-radius:16px;background:rgba(18,18,18,.6);color:#fff;font:700 15px/32px -apple-system,system-ui,sans-serif;text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent}',
+      '#fl-ff .spd.on{background:rgba(225,48,108,.9)}',
       '#fl-ff .dots{display:flex;justify-content:center;gap:4px;padding-top:8px}',
       '#fl-ff .a .cc{font-weight:600;font-size:14px}',
       '#fl-ff .a .more-b svg{stroke-linecap:round}',
@@ -912,6 +914,49 @@
     return b;
   }
 
+  // Change a video's speed without losing its place: Safari can jump a playing video back
+  // about a second when its speed changes, so put it back where it was if that happens.
+  function setRateKeepingSpot(v, rate) {
+    if (v.playbackRate === rate) return;
+    var at = v.currentTime;
+    v.playbackRate = rate;
+    var fix = function () {
+      // (Not when it simply looped back to the start at its end.)
+      if (v.currentTime < at - 0.15 && !v.seeking && !(v.duration - at < 0.6)) v.currentTime = at;
+    };
+    setTimeout(fix, 60);
+    setTimeout(fix, 250);
+  }
+
+  // 2× for one video in the feed: each video has its own and starts at 1×; tapping switches
+  // between 1× and 2× (pink while 2×), and the speed stays with that video only.
+  function speedButtonFor(v) {
+    var b = el('button', 'spd', '1×');
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Playback speed');
+    var show = function () {
+      var two = v.playbackRate > 1.5;
+      b.textContent = two ? '2×' : '1×';
+      b.classList.toggle('on', two);
+    };
+    b.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var rate = v.playbackRate > 1.5 ? 1 : 2;
+      setRateKeepingSpot(v, rate);
+      v.defaultPlaybackRate = rate;
+      if (v.paused) { var p = v.play(); if (p && p.catch) p.catch(function () {}); }
+      show();
+    });
+    v.addEventListener('ratechange', show);
+    // Safari can put the speed back to normal when a video starts again: keep this one's.
+    v.addEventListener('playing', function () {
+      if (v.playbackRate !== v.defaultPlaybackRate) v.playbackRate = v.defaultPlaybackRate;
+      show();
+    });
+    return b;
+  }
+
   function slideFor(m) {
     var s = el('div', 'slide');
     var video = m.video_versions && m.video_versions[0] && m.video_versions[0].url;
@@ -926,6 +971,7 @@
       v.loop = true;
       s.appendChild(v);
       s.appendChild(pipButton(v));
+      s.appendChild(speedButtonFor(v));
     } else {
       var img = document.createElement('img');
       img.loading = 'lazy';
@@ -2156,15 +2202,6 @@
     }
   }
 
-  // No Repost, anywhere in the app (Instagram's post pages and Reels have one).
-  function noRepostStep() {
-    var icons = document.querySelectorAll('svg[aria-label="Repost"]');
-    for (var i = 0; i < icons.length; i++) {
-      var b = icons[i].closest('[role="button"],button,a') || icons[i].parentElement;
-      if (b && b.style.display !== 'none') b.style.setProperty('display', 'none', 'important');
-    }
-  }
-
   // The heart (Notifications) at the top of Home: Safari treats the first tap on it as a hover
   // and drops the click, so a tap opens it directly.
   var tapStart = null;
@@ -2475,16 +2512,21 @@
     return n + ' ' + unit + (n === 1 ? '' : 's');
   }
   function confirmOldLike(b, age) {
+    confirmAction('This post is ' + ageText(age) + ' old. Are you sure you want to like it?', 'Like',
+      function () { likeLetThrough = b; b.click(); });
+  }
+  // A small "Are you sure?" card: the action in red, Cancel in bold blue.
+  function confirmAction(text, okLabel, onOk) {
     var old = document.getElementById('fl-confirm');
     if (old) old.remove();
     var box = el('div');
     box.id = 'fl-confirm';
     var card = el('div', 'card');
-    card.appendChild(el('div', 'msg', 'This post is ' + ageText(age) + ' old. Are you sure you want to like it?'));
+    card.appendChild(el('div', 'msg', text));
     var close = function () { box.classList.remove('on'); setTimeout(function () { box.remove(); }, 180); };
-    var like = el('button', 'like', 'Like');
+    var like = el('button', 'like', okLabel);
     var cancel = el('button', 'cancel', 'Cancel');
-    like.__flTap = function () { close(); likeLetThrough = b; b.click(); };
+    like.__flTap = function () { close(); onOk(); };
     cancel.__flTap = close;
     like.onclick = like.__flTap;
     cancel.onclick = cancel.__flTap;
@@ -2531,6 +2573,20 @@
     post({ type: 'haptic', value: 'like' });
   }, true);
 
+  // Repost: always asks first (it puts the post on your own profile for everyone to see).
+  // Undoing a repost doesn't ask.
+  var repostLetThrough = null;
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest && e.target.closest('[role="button"],button');
+    if (!t || t.closest('#fl-confirm') || !t.querySelector('svg[aria-label="Repost"]')) return;
+    if (repostLetThrough === t) { repostLetThrough = null; return; }
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    confirmAction('Are you sure you want to repost this? It will show on your profile.', 'Repost',
+      function () { repostLetThrough = t; t.click(); });
+  }, true);
+
   // 2× speed: a small button over a big playing video (a reel a friend sent, a post's video).
   // Tap to switch between 1× and 2×; the choice holds for the rest of this page's videos.
   // Swiping between a post's photos on Instagram's own pages (Explore, profiles, shared posts):
@@ -2570,6 +2626,30 @@
     }, 250);
   }, true);
 
+  // A post page scrolls (to read the caption), and swiping up once you're at the bottom goes
+  // back, as it did before posts could scroll. A post too short to scroll is at its bottom
+  // straight away, so one swipe up goes back.
+  var postSwipe = null;
+  function atPostBottom() {
+    var se = document.scrollingElement || document.documentElement;
+    return Math.ceil(se.scrollTop + window.innerHeight) >= se.scrollHeight - 4;
+  }
+  document.addEventListener('touchstart', function (e) {
+    postSwipe = null;
+    if (!/^\/p\/[^/]+\/?$/.test(location.pathname) || !e.touches || e.touches.length !== 1) return;
+    if (document.querySelector('[role="dialog"]')) return;   // comments, share sheet and the like
+    var t = e.touches[0];
+    postSwipe = { x: t.clientX, y: t.clientY, at: Date.now(), bottom: atPostBottom() };
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function (e) {
+    var s = postSwipe;
+    postSwipe = null;
+    var t = e.changedTouches && e.changedTouches[0];
+    if (!s || !t || !s.bottom) return;
+    var dy = t.clientY - s.y, dx = Math.abs(t.clientX - s.x);
+    if (dy < -60 && dx < Math.abs(dy) && Date.now() - s.at < 1000) history.back();
+  }, true);
+
   // Each new post or reel starts at 1×; the button always shows the speed of the video on screen.
   var playRate = 1, ratePath = location.pathname;
   function samePage() {
@@ -2578,7 +2658,7 @@
   document.addEventListener('playing', function (e) {
     var v = e.target;
     samePage();
-    if (v && v.tagName === 'VIDEO' && v.playbackRate !== playRate) v.playbackRate = playRate;
+    if (v && v.tagName === 'VIDEO' && !v.closest('#fl-ff') && v.playbackRate !== playRate) v.playbackRate = playRate;
   }, true);
   function bigVideo() {
     var best = null, bestH = 0;
@@ -2614,7 +2694,7 @@
         e.preventDefault(); e.stopPropagation();
         var v = bigVideo();
         playRate = (v ? v.playbackRate : playRate) > 1.5 ? 1 : 2;
-        [].forEach.call(document.querySelectorAll('video'), function (x) { if (!x.closest('#fl-ff')) x.playbackRate = playRate; });
+        [].forEach.call(document.querySelectorAll('video'), function (x) { if (!x.closest('#fl-ff')) setRateKeepingSpot(x, playRate); });
         showRate(btn, playRate);
       };
       document.body.appendChild(btn);
@@ -2687,7 +2767,6 @@
     shareStep();
     saveStep();
     shareAppsStep();
-    noRepostStep();
     if (TAB === 'home' || TAB === 'messages') dmBadgeStep();
     ownProfileLookStep();
     feedbackDmStep();

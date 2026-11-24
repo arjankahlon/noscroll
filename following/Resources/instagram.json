@@ -173,8 +173,7 @@
           "kind": "isolate",
           "label": "One video at a time",
           "patterns": [
-            "^/reel/[^/]+/?(\\?.*)?$",
-            "^/p/[^/]+/?(\\?.*)?$"
+            "^/reel/[^/]+/?(\\?.*)?$"
           ],
           "onAdvance": "back",
           "defaultEnabled": true

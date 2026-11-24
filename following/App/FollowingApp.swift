@@ -74,7 +74,10 @@ enum InstaTab: Int, CaseIterable, Identifiable {
         let base = "https://www.instagram.com"
         switch self {
         case .home: return URL(string: "\(base)/?variant=following")!
-        case .search: return URL(string: "\(base)/explore/search/")!
+        case .search:
+            // "Enable Explore page": the Search button opens Explore; otherwise the search bar.
+            let explore = UserDefaults.standard.object(forKey: "settings.explorePage") as? Bool ?? false
+            return URL(string: explore ? "\(base)/explore/" : "\(base)/explore/search/")!
         case .messages: return URL(string: "\(base)/direct/inbox/")!
         case .profile:
             if let user = UserDefaults.standard.string(forKey: InstaWeb.usernameKey), !user.isEmpty {

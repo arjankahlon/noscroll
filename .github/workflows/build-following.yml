@@ -30,6 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The Intel Macs default to Xcode 16 (iOS 18), which gives the app the old flat tab bar.
+      # Built with Xcode 26 it gets iOS 26's floating glass tab bar, as on the Apple-chip Macs.
+      - name: Use Xcode 26
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -v -i beta | sort -V | tail -1)
+          if [ -n "$X" ]; then sudo xcode-select -s "$X"; else echo "::warning::No Xcode 26 on this Mac: the tab bar will look like iOS 18"; fi
+          xcodebuild -version
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

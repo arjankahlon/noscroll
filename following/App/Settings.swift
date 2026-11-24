@@ -45,7 +45,7 @@ final class AppSettings: ObservableObject {
             Item(key: "hideLikedEarlier", title: "Don't show posts you've already liked", detail: "Below the caught-up checkmark."),
         ]),
         ("Search", [
-            Item(key: "explorePage", title: "Enable Explore page", detail: "When off, the Search button goes straight to the search bar without showing the Explore page.", defaultOn: false),
+            Item(key: "explorePage", title: "Enable Explore page", detail: "When off, the Search button goes straight to the search bar without showing the Explore page. Tap Cancel there to see Explore anyway.", defaultOn: false),
         ]),
         ("Haptic Vibrations", [
             Item(key: "hapticTabs", title: "Haptic on tab switch", detail: ""),
@@ -155,10 +155,11 @@ final class AppSettings: ObservableObject {
 
     func markSeen() { changed = false }
 
-    /// The NoScroll engine's own switches (its Explore rules follow "Enable Explore page").
+    /// The NoScroll engine's own switches. Explore is never blocked: "Enable Explore page" only
+    /// decides whether the Search button opens Explore or the search bar (InstaTab.startURL),
+    /// and Cancel on the search bar always leads to Explore.
     var engineSettingsJSON: String {
-        !isOn("explorePage") ? "{}" :
-            "{\"instagram.explore-route\": false, \"instagram.explore-tab\": false, \"instagram.search-grid\": false}"
+        "{\"instagram.explore-route\": false, \"instagram.explore-tab\": false, \"instagram.search-grid\": false}"
     }
 
     /// What the pages read: `window.__FL = {...}`.
