@@ -2261,6 +2261,27 @@
     post({ type: 'dmBadge', value: n });
   }
 
+  // Your own profile, tapped again in the tab bar: has anything worth reloading for changed?
+  // Only your posts (their number) and your profile picture count, not followers. Compares
+  // the page as loaded with a fresh copy of it from Instagram (its summary: "7 Posts", and the
+  // picture's file). "changed", "same", or "unknown" if it can't tell.
+  window.__flProfileChanged = async function () {
+    var sig = function (desc, img) {
+      var posts = /([\d,.]+[KM]?) Posts?/i.exec(desc || '');
+      var file = (img || '').split('?')[0].split('/').pop();
+      return posts && file ? posts[1] + '|' + file : null;
+    };
+    var meta = function (doc, prop) { var m = doc.querySelector('meta[property="' + prop + '"]'); return m && m.content; };
+    var now = sig(meta(document, 'og:description'), meta(document, 'og:image'));
+    try {
+      var html = await (await fetch(location.pathname, { credentials: 'include' })).text();
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var fresh = sig(meta(doc, 'og:description'), meta(doc, 'og:image'));
+      if (!now || !fresh) return 'unknown';
+      return now === fresh ? 'same' : 'changed';
+    } catch (e) { return 'unknown'; }
+  };
+
   // Your own profile (Profile tab): zoomed in like Instagram's app, where exactly five highlights
   // fit across before the row scrolls. The zoom is worked out from the row itself (so it fits
   // any iPhone width): the sixth highlight starts right at the screen's edge. The profile
@@ -2277,22 +2298,33 @@
       });
     if (!own) {
       if (main.style.zoom) main.style.removeProperty('zoom');
+      delete main.dataset.flSized;   // back on your profile later: worked out again
+      main.__flWait = 0;
+      main.__flPicZ = 0;
       return;
     }
-    var zoom = parseFloat(main.style.zoom) || 1;
-    var links = main.querySelectorAll('a[href*="/stories/highlights/"]');
-    if (links.length >= 6) {
-      var sixth = links[5].closest('li') || links[5];
-      var left = sixth.getBoundingClientRect().left;
-      var stuckRow = main.style.zoom && main.__flLastLeft === left;   // as for the picture below
-      main.__flLastLeft = left;
-      if (!stuckRow && left > 0 && Math.abs(left - window.innerWidth) > 1) {
-        // Positions grow in step with the zoom, so one step lands it (a second pass tidies up).
-        zoom = Math.max(1, Math.min(1.4, zoom * window.innerWidth / left));
-        main.style.zoom = String(Math.round(zoom * 1000) / 1000);
+    // The page's zoom and the picture's: worked out once, from measurements taken before any
+    // zoom, and never adjusted again. (Adjusting them again and again from fresh measurements
+    // made the whole top of the page, and the picture, grow every second on some iPhones,
+    // where measured sizes don't follow the zoom.) Waits for the highlights (up to ~4 s).
+    if (!main.dataset.flSized) {
+      main.__flWait = (main.__flWait || 0) + 1;
+      var links = main.querySelectorAll('a[href*="/stories/highlights/"]');
+      var pic0 = main.querySelector('header img[alt*="profile picture" i]') || main.querySelector('header img');
+      if ((links.length >= 6 && pic0) || main.__flWait > 4) {
+        var mainZ = 1.1;   // fewer than six highlights: nothing to line up, same look
+        if (links.length >= 6) {
+          var left0 = (links[5].closest('li') || links[5]).getBoundingClientRect().left;
+          if (left0 > 0) mainZ = Math.max(1, Math.min(1.3, window.innerWidth / left0));
+        }
+        var picZ = 1, w0 = pic0 ? pic0.getBoundingClientRect().width : 0;
+        if (w0 > 0) picZ = Math.max(0.8, Math.min(1.2, PIC_SIZE / (w0 * mainZ)));
+        main.dataset.flSized = '1';
+        main.style.zoom = String(Math.round(mainZ * 1000) / 1000);
+        main.__flPicZ = picZ;
+        // Drawn and sized: the app can drop its saved picture of this page (and take a new one).
+        setTimeout(function () { post({ type: 'profileReady' }); }, 300);
       }
-    } else if (!main.style.zoom) {
-      main.style.zoom = '1.1';   // fewer than six highlights: nothing to line up, same look
     }
     // Less empty space above the picture: no gap above the header, and no "Note..." bubble
     // (it also reserved a band of space above the picture).
@@ -2362,16 +2394,10 @@
         pic.__flBox = best;
       }
       var b = pic.__flBox;
-      var w = pic.getBoundingClientRect().width;
-      // Some Safari builds report the size without the zoom: if the size didn't change after
-      // the last adjustment, stop (otherwise the picture grows every second).
-      var stuck = b && b.style.zoom && b.__flLastW === w;
-      if (b) b.__flLastW = w;
-      if (b && !stuck && w > 0 && Math.abs(w - PIC_SIZE) > 0.5) {
-        var pz = parseFloat(b.style.zoom) || 1;
-        // Never more than 1.5× (or under 0.6×), whatever the measurement says.
-        var nz = Math.max(0.6, Math.min(1.5, pz * PIC_SIZE / w));
-        b.style.zoom = String(Math.round(nz * 1000) / 1000);
+      // Its zoom was worked out along with the page's (above); applied once.
+      if (b && !b.dataset.flPic && main.__flPicZ) {
+        b.dataset.flPic = '1';
+        if (Math.abs(main.__flPicZ - 1) > 0.01) b.style.zoom = String(Math.round(main.__flPicZ * 1000) / 1000);
       }
 
     }

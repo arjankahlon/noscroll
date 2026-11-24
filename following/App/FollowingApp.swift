@@ -251,6 +251,20 @@ final class TabWebViews: ObservableObject {
         // Home, already on the feed: refresh in place (quick). Otherwise back to the start page.
         if tab == .home, StoriesModel.isFollowingFeed(c.webView.url) {
             c.refreshOrReload()
+        } else if tab == .profile, let user = UserDefaults.standard.string(forKey: InstaWeb.usernameKey), !user.isEmpty,
+                  c.webView.url?.path == "/\(user)/" || c.webView.url?.path == "/\(user)" {
+            // Your own profile, already open: back to the top, and reload only if your posts or
+            // profile picture changed (checked in the background, without redrawing the page).
+            c.webView.scrollView.setContentOffset(CGPoint(x: 0, y: -c.webView.scrollView.adjustedContentInset.top), animated: true)
+            Task { @MainActor in
+                let r = try? await c.webView.callAsyncJavaScript(
+                    "return window.__flProfileChanged ? await window.__flProfileChanged() : 'unknown'",
+                    arguments: [:], contentWorld: .page)
+                #if DEBUG
+                DebugHooks.log("profile check: \(String(describing: r))")
+                #endif
+                if (r as? String) == "changed" { c.loadStart() }
+            }
         } else {
             c.loadStart()
         }

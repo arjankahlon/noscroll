@@ -137,7 +137,58 @@ final class InstaWebController: NSObject, ObservableObject {
     func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
+        if tab == .profile { showSavedProfile() }
         loadStart()
+    }
+
+    // MARK: Your profile, instantly on a fresh start
+
+    /// A picture of your profile as you last saw it: shown over the Profile tab the moment the
+    /// app starts, while the live page loads underneath (taps go through to it), then faded out
+    /// once the page has drawn and sized itself. Retaken each time the page settles.
+    private var cover: UIImageView?
+    private static var savedProfileURL: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("profile-snapshot.jpg")
+    }
+
+    private func showSavedProfile() {
+        guard cover == nil, let img = UIImage(contentsOfFile: Self.savedProfileURL.path) else { return }
+        let v = UIImageView(image: img)
+        v.contentMode = .top
+        v.clipsToBounds = true
+        v.backgroundColor = .systemBackground
+        v.isUserInteractionEnabled = false
+        v.translatesAutoresizingMaskIntoConstraints = false
+        webView.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: webView.topAnchor), v.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
+            v.leadingAnchor.constraint(equalTo: webView.leadingAnchor), v.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+        ])
+        cover = v
+        // Never longer than this, whatever happens with the page.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.hideSavedProfile() }
+    }
+
+    private func hideSavedProfile() {
+        guard let v = cover else { return }
+        cover = nil
+        UIView.animate(withDuration: 0.2, animations: { v.alpha = 0 }, completion: { _ in v.removeFromSuperview() })
+    }
+
+    /// The page says your profile is drawn and sized: drop the cover, and save a fresh picture
+    /// (only when it's on screen and scrolled to the top, so it matches a fresh start).
+    private func profileReady() {
+        hideSavedProfile()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.saveProfilePicture() }
+    }
+
+    func saveProfilePicture() {
+        guard tab == .profile, cover == nil, webView.window != nil, !webView.isHidden,
+              webView.scrollView.contentOffset.y <= -webView.scrollView.adjustedContentInset.top + 2 else { return }
+        webView.takeSnapshot(with: nil) { image, _ in
+            guard let data = image?.jpegData(compressionQuality: 0.85) else { return }
+            try? data.write(to: Self.savedProfileURL, options: .atomic)
+        }
     }
 
     /// Open an address in this tab. Counts as its first load, so the tab doesn't replace it with
@@ -189,6 +240,10 @@ final class InstaWebController: NSObject, ObservableObject {
         if type == "username", let user = dict["value"] as? String,
            user.range(of: "^[A-Za-z0-9._]{1,30}$", options: .regularExpression) != nil {
             UserDefaults.standard.set(user, forKey: InstaWeb.usernameKey)
+            return
+        }
+        if type == "profileReady" {
+            profileReady()
             return
         }
         if type == "profilePic", let address = dict["value"] as? String {
