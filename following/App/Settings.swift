@@ -47,13 +47,16 @@ final class AppSettings: ObservableObject {
         ("Search", [
             Item(key: "explorePage", title: "Enable Explore page", detail: "When off, the Search button goes straight to the search bar without showing the Explore page. Tap Cancel there to see Explore anyway.", defaultOn: false),
         ]),
+        ("Videos", [
+            Item(key: "speedButton", title: "1×/2× speed button", detail: "A button on videos to switch between normal speed and double speed."),
+        ]),
         ("Haptic Vibrations", [
             Item(key: "hapticTabs", title: "Haptic on tab switch", detail: ""),
             Item(key: "hapticCheck", title: "Haptic on caught-up checkmark", detail: ""),
             Item(key: "hapticLikes", title: "Haptic on likes", detail: ""),
         ]),
     ]
-    // Always on, no switch: the unread chats badge, the 2× speed button, the simpler Share sheet,
+    // Always on, no switch: the unread chats badge, the simpler Share sheet,
     // the app look for your profile, and the update banner.
 
 

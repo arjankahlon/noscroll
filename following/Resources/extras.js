@@ -942,18 +942,18 @@
     return b;
   }
 
-  // Change a video's speed without losing its place: Safari can jump a playing video back
-  // about a second when its speed changes, so put it back where it was if that happens.
+  // "1×" is really 1.01×: you can't see or hear the difference, but it keeps Safari's
+  // pitch correction running, so switching to 2× and back is seamless. From exactly 1×, every
+  // switch stalls or jumps back for a moment (measured: 1.66 s of video in a second instead of
+  // 2.00 on the way up; from 1.01× it's exactly 2.00 and 1.01).
+  var NORMAL_RATE = 1.01;
+
+  // Change a video's speed. (With Safari's pitch correction on, a change while playing shows
+  // frames from up to ~2 s earlier for a moment: a brief jump back. Measured November 2026.)
   function setRateKeepingSpot(v, rate) {
     if (v.playbackRate === rate) return;
-    var at = v.currentTime;
+    v.defaultPlaybackRate = rate;
     v.playbackRate = rate;
-    var fix = function () {
-      // (Not when it simply looped back to the start at its end.)
-      if (v.currentTime < at - 0.15 && !v.seeking && !(v.duration - at < 0.6)) v.currentTime = at;
-    };
-    setTimeout(fix, 60);
-    setTimeout(fix, 250);
   }
 
   // 2× for one video in the feed: each video has its own and starts at 1×; tapping switches
@@ -970,7 +970,7 @@
     b.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
-      var rate = v.playbackRate > 1.5 ? 1 : 2;
+      var rate = v.playbackRate > 1.5 ? NORMAL_RATE : 2;
       setRateKeepingSpot(v, rate);
       v.defaultPlaybackRate = rate;
       if (v.paused) { var p = v.play(); if (p && p.catch) p.catch(function () {}); }
@@ -996,10 +996,11 @@
       v.setAttribute('playsinline', '');
       v.controls = true;
       v.preload = 'metadata';
+      v.defaultPlaybackRate = NORMAL_RATE;
       v.loop = true;
       s.appendChild(v);
       s.appendChild(pipButton(v));
-      s.appendChild(speedButtonFor(v));
+      if (S('speedButton')) s.appendChild(speedButtonFor(v));
     } else {
       var img = document.createElement('img');
       img.loading = 'lazy';
@@ -2713,9 +2714,9 @@
   }, true);
 
   // Each new post or reel starts at 1×; the button always shows the speed of the video on screen.
-  var playRate = 1, ratePath = location.pathname;
+  var playRate = NORMAL_RATE, ratePath = location.pathname;
   function samePage() {
-    if (location.pathname !== ratePath) { ratePath = location.pathname; playRate = 1; }
+    if (location.pathname !== ratePath) { ratePath = location.pathname; playRate = NORMAL_RATE; }
   }
   document.addEventListener('playing', function (e) {
     var v = e.target;
@@ -2737,6 +2738,50 @@
     btn.textContent = two ? '2×' : '1×';
     btn.style.background = two ? 'rgba(225,48,108,.9)' : 'rgba(0,0,0,.6)';
   }
+  // The big video on Instagram's own pages (a post from Explore, a profile, a shared link):
+  // Apple's own controls, with the scrubber, as in the Home feed. Instagram's layers stacked
+  // over the video (its tap area, play icon, mute button) stop taking touches so the controls
+  // get them. The 2× button stays on top.
+  function useAppleControls(v) {
+    if (!v.__flApple) {
+      v.__flApple = true;
+      v.setAttribute('playsinline', '');
+      // Not until the first tap on the video: switched on, they show at once, so they'd cover
+      // a video you just opened. After that, iOS shows and hides them as usual.
+      v.addEventListener('touchend', function (e) {
+        if (v.controls) return;
+        var t = e.changedTouches && e.changedTouches[0];
+        if (t && v.__flTouch && (Math.abs(t.clientX - v.__flTouch.x) > 10 || Math.abs(t.clientY - v.__flTouch.y) > 10)) return;   // a scroll
+        v.controls = true;
+      });
+      v.addEventListener('touchstart', function (e) {
+        var t = e.touches && e.touches[0];
+        v.__flTouch = t ? { x: t.clientX, y: t.clientY } : null;
+      }, { passive: true });
+    }
+    // Checked every time: Instagram adds its layers after the video.
+    var vr = v.getBoundingClientRect();
+    var overlaps = function (e) {
+      var r = e.getBoundingClientRect();
+      return r.width > 0 && r.left < vr.right && r.right > vr.left && r.top < vr.bottom && r.bottom > vr.top;
+    };
+    // Climb a few levels; at each, every other branch that covers the video (before or after
+    // it): out of the way and out of sight, so there's one set of controls.
+    // (Up to the box that's still about the video's own size, however deep the video sits.)
+    for (var n = v, d = 0; n && n.parentElement && d < 14 && n !== document.body; n = n.parentElement, d++) {
+      var pr = n.parentElement.getBoundingClientRect();
+      if (pr.height > vr.height * 1.25 || pr.width > vr.width * 1.25) break;
+      var kids = n.parentElement.children;
+      for (var i = 0; i < kids.length; i++) {
+        var s = kids[i];
+        if (s === n || (s.id && s.id.indexOf('fl-') === 0) || s.style.visibility === 'hidden') continue;
+        // (Instagram's layer can sit in a zero-height box that it spills out of: look inside.)
+        if (!overlaps(s) && ![].some.call(s.querySelectorAll('div, button'), overlaps)) continue;
+        s.style.setProperty('pointer-events', 'none', 'important');
+        s.style.setProperty('visibility', 'hidden', 'important');
+      }
+    }
+  }
   function speedButtonStep() {
     var btn = document.getElementById('fl-speed');
     samePage();
@@ -2746,6 +2791,10 @@
       return;
     }
     var cur = bigVideo();
+    if (cur) useAppleControls(cur);
+    // Already playing at exactly 1× (it started before the page script saw it): 1.01×, so the
+    // first tap of 2× is seamless too.
+    if (cur && cur.playbackRate === 1 && playRate === NORMAL_RATE) cur.playbackRate = NORMAL_RATE;
     if (!btn) {
       btn = document.createElement('button');
       btn.id = 'fl-speed';
@@ -2755,14 +2804,14 @@
       btn.__flTap = function (e) {
         e.preventDefault(); e.stopPropagation();
         var v = bigVideo();
-        playRate = (v ? v.playbackRate : playRate) > 1.5 ? 1 : 2;
+        playRate = (v ? v.playbackRate : playRate) > 1.5 ? NORMAL_RATE : 2;
         [].forEach.call(document.querySelectorAll('video'), function (x) { if (!x.closest('#fl-ff')) setRateKeepingSpot(x, playRate); });
         showRate(btn, playRate);
       };
       document.body.appendChild(btn);
     }
     if (cur) showRate(btn, cur.playbackRate);
-    btn.style.display = cur ? 'block' : 'none';
+    btn.style.display = cur && S('speedButton') ? 'block' : 'none';   // ("1×/2× speed button" in Settings)
   }
 
   // Someone's profile, their "..." menu: Instagram's "Embed" row becomes "Mute account" /
