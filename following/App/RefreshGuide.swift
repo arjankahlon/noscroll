@@ -87,26 +87,27 @@ struct RefreshGuideView: View {
             }
 
             VStack(alignment: .leading, spacing: 14) {
-                step(1, Text("Turn on LocalDevVPN")) { vpnPicture }
+                step(1, Text("Turn on LocalDevVPN"), opens: Self.vpnOn) { vpnPicture }
                 step(2, HStack(spacing: 6) {
                     Text("Open")
                     Image("SideStoreLogo").resizable().frame(width: 22, height: 22)
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                     Text("SideStore, then My Apps")
-                }) {
+                }, opens: Self.sideStore) {
                     picture("GuideMyAppsTab")
                 }
                 step(3, Text("Tap Refresh All"), detail: "Renews SideStore and Following together. If Following says Update, tap that too.") {
                     picture("GuideRefreshAll").frame(maxHeight: 165)
                 }
-                step(4, Text("When it's done, turn off LocalDevVPN")) { EmptyView() }
+                step(4, Text("When it's done, turn off LocalDevVPN"), opens: Self.vpnOff) { EmptyView() }
             }
             .padding(.top, 16)
 
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text("Always use **Refresh All**, not just Following. If SideStore itself runs out, it won't open, so nothing can be refreshed until SideStore is reinstalled from a computer, and Following stops when its own 7 days end.")
+                (Text("Always use ") + Text("Refresh All").bold().foregroundColor(Self.instagramPurple)
+                    + Text(", not just Following. If SideStore itself expires, nothing can be refreshed until SideStore is reinstalled from a computer."))
                     .font(.system(size: 14))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -132,7 +133,19 @@ struct RefreshGuideView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    private func step<T: View, P: View>(_ n: Int, _ title: T, detail: String? = nil, @ViewBuilder picture: () -> P) -> some View {
+    /// Tapping steps 1 and 4 opens LocalDevVPN and switches it on or off (its own links); step 2
+    /// opens SideStore.
+    static let vpnOn = URL(string: "localdevvpn://enable")!
+    static let vpnOff = URL(string: "localdevvpn://disable")!
+    static let sideStore = URL(string: "sidestore://")!
+
+    private func step<T: View, P: View>(_ n: Int, _ title: T, detail: String? = nil, opens: URL? = nil, @ViewBuilder picture: () -> P) -> some View {
+        stepBody(n, title, detail: detail, picture: picture)
+            .contentShape(Rectangle())
+            .onTapGesture { if let opens { UIApplication.shared.open(opens) } }
+    }
+
+    private func stepBody<T: View, P: View>(_ n: Int, _ title: T, detail: String?, @ViewBuilder picture: () -> P) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text("\(n)")
                 .font(.system(size: 15, weight: .bold))
