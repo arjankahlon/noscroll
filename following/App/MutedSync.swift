@@ -46,10 +46,21 @@ final class MutedSync: ObservableObject {
         // Wait for the list to settle: the same answer twice in a row (it renders in steps).
         var last: String?
         var settled: String?
+        var emptyReads = 0
         for _ in 0..<30 {
             try? await Task.sleep(nanoseconds: 700_000_000)
             guard let s = try? await w.callAsyncJavaScript(Self.scrape, arguments: [:], contentWorld: .page) as? String,
                   !s.isEmpty else { continue }
+            // The heading shows before the list does, so "nobody" only counts once the page has
+            // stayed empty a while (5 reads, ~3.5 s): someone with no muted accounts isn't kept
+            // waiting the full 21 s on every check.
+            if s == "[]" {
+                emptyReads += 1
+                if emptyReads >= 5 { settled = s; break }
+                last = last ?? s
+                continue
+            }
+            emptyReads = 0
             if s == last { settled = s; break }
             last = s
         }
@@ -59,6 +70,10 @@ final class MutedSync: ObservableObject {
             guard let u = r["u"], !u.isEmpty else { return nil }
             return AppSettings.MutedAccount(id: r["id"] ?? "", username: u, what: r["what"])
         }
+        // An empty read never wipes a list that has accounts (a slow page once emptied it). If you
+        // really unmuted everyone elsewhere, they leave the list as you unmute them here, or on the
+        // next read that finds the page's list again.
+        if list.isEmpty && !AppSettings.shared.mutedAccounts.isEmpty { return }
         lastSync = Date()
         AppSettings.shared.replaceMuted(list)
     }
