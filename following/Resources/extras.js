@@ -491,11 +491,19 @@
   // Who the current download is for (so they don't flash red while it's still saving them).
   var offPlanned = [];
   try { offPlanned = JSON.parse(localStorage.getItem('following.offPlan') || '[]') || []; } catch (e) {}
+  // A photo with a song is stored as a video of the still picture (about 1 frame a second):
+  // it counts as a photo (saved as the picture, its song named in the offline viewer).
+  function isPhoto(it) {
+    if (it.media_type === 1) return true;
+    if (it.media_type !== 2 || !(it.story_music_stickers || []).length) return false;
+    var f = /frameRate="(\d+)\/(\d+)"/.exec(it.video_dash_manifest || '');
+    return !!f && +f[2] > 0 && +f[1] / +f[2] <= 2;
+  }
   function kindOf(r) {
     var items = r.items || [], k = '';
     var shared = function (it) { return (it.story_feed_media || []).length > 0; };
     if (items.some(shared)) k += 'p';
-    if (items.some(function (it) { return it.media_type === 2 && !shared(it); })) k += 'v';
+    if (items.some(function (it) { return !isPhoto(it) && !shared(it); })) k += 'v';
     return k;
   }
   function saveKinds() { try { localStorage.setItem('following.kinds', JSON.stringify(storyKinds)); } catch (e) {} }
@@ -510,7 +518,7 @@
     if (!tray.length) return;
     kindsBusy = true;
     try {
-      var out = {};
+      var out = {}, info = {};
       for (var i = 0; i < tray.length; i += 20) {
         var d = await gqlRequest('PolarisStoriesV3ReelPageStandaloneQuery', '39989351314045574', {
           reel_ids_arr: tray.slice(i, i + 20).map(function (r) { return String(r.id); }), is_highlight: false, media_id: null,
@@ -518,16 +526,182 @@
         ((d.xdt_api__v1__feed__reels_media || {}).reels_media || []).forEach(function (r) {
           var t = tray.filter(function (x) { return String(x.id) === String(r.id); })[0] || {};
           var name = (r.user && r.user.username) || ((t.user || {}).username) || '';
-          if (name) out[name] = kindOf(r);
+          if (name) { out[name] = kindOf(r); info[name] = shareSummary(r, t); }
         });
       }
       storyKinds = out;
       saveKinds();
+      shareInfo = info;
+      buildGroups();
       kindsFor = v;
     } catch (e) { kindsRetry = Date.now() + 60000; }
     kindsBusy = false;
     drawMarks();
+    drawGroups();
     offlineRow();
+  }
+
+  // Posts shared by 3 or more people (seen or not): one combined bubble in the row in place of
+  // everyone whose only story is that post (people with other stories too keep their own
+  // bubble), opening the app's combined viewer (the post once, and who shared it and what each
+  // added). Opening it tells Instagram nothing: a copy only counts as seen once watched in
+  // Instagram's own viewer (from that person's profile, where their stories show as usual).
+  var shareInfo = {}, groups = [];
+  var groupSeen = {};
+  try { groupSeen = JSON.parse(localStorage.getItem('following.groupSeen') || '{}') || {}; } catch (e) {}
+  // Instagram's interactive add-ons, by the name of their list on a story.
+  var STICKERS = { story_polls: 'Poll', story_questions: 'Question', story_quizs: 'Quiz', story_sliders: 'Slider',
+    story_countdowns: 'Countdown', story_link_stickers: 'Link', reel_mentions: 'Mention', story_hashtags: 'Hashtag',
+    story_locations: 'Location', story_music_stickers: 'Music', story_bloks_stickers: 'Sticker', story_cta: 'Link' };
+  function shareSummary(r, t) {
+    var u = r.user && r.user.username ? r.user : (t.user || {});
+    return { reelId: String(r.id), ownerId: String(u.pk || u.id || r.id), pic: u.profile_pic_url || ((t.user || {}).profile_pic_url) || '',
+      seen: r.seen || t.seen || 0,
+      items: (r.items || []).map(function (it) {
+        var sh = (it.story_feed_media || [])[0];
+        var c = ((it.image_versions2 || {}).candidates || [])[0] || {};
+        var v = it.media_type === 2 ? ((it.video_versions || [])[0] || {}) : null;
+        var extras = [];
+        Object.keys(it).forEach(function (k) {
+          if (k === 'story_feed_media' || !/^(story_|reel_mentions)/.test(k) || !Array.isArray(it[k]) || !it[k].length) return;
+          var label = STICKERS[k] || k.replace(/^story_/, '').replace(/_/g, ' ').replace(/s$/, '');
+          if (extras.indexOf(label) === -1) extras.push(label);
+        });
+        return { pk: String(it.pk), takenAt: it.taken_at || 0, code: sh ? (sh.media_code || sh.media_id || '') : '',
+          url: c.url || '', vurl: v ? (v.url || '') : '', extras: extras };
+      }) };
+  }
+  function trayNames() {
+    var me = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || '';
+    return (window.__flTray || []).filter(function (r) { return String((r.user || {}).pk) !== me; })
+      .map(function (r) { return (r.user || {}).username || ''; });
+  }
+  function buildGroups() {
+    var byCode = {};
+    trayNames().forEach(function (n) {
+      var s = shareInfo[n];
+      if (!s) return;
+      var done = {};
+      s.items.forEach(function (it) {
+        if (!it.code || done[it.code]) return;
+        done[it.code] = true;
+        (byCode[it.code] = byCode[it.code] || []).push({ name: n, item: it });
+      });
+    });
+    groups = Object.keys(byCode).filter(function (c) { return byCode[c].length >= 3; }).map(function (c) {
+      var ms = byCode[c].map(function (m) {
+        var s = shareInfo[m.name], it = m.item;
+        return { username: m.name, pic: s.pic, reelId: s.reelId, ownerId: s.ownerId, pk: it.pk, takenAt: it.takenAt,
+          url: it.url, vurl: it.vurl, extras: it.extras, seen: s.seen >= it.takenAt,
+          only: s.items.every(function (x) { return x.code === c; }),
+          canMark: !s.items.some(function (x) { return x.takenAt < it.takenAt && !(s.seen >= x.takenAt); }) };
+      });
+      var slot = ms.filter(function (m) { return m.only; })[0];
+      return { code: c, members: ms, slot: slot ? slot.username : '' };
+    });
+    // Forget opened posts that aren't shared any more.
+    var keep = {};
+    groups.forEach(function (g) { if (Array.isArray(groupSeen[g.code])) keep[g.code] = groupSeen[g.code]; });
+    groupSeen = keep;
+    try { localStorage.setItem('following.groupSeen', JSON.stringify(groupSeen)); } catch (e) {}
+  }
+  // Unseen: someone's copy you haven't seen, on Instagram or here (a new repost since you
+  // opened it colors the ring again; opening it again marks theirs seen too).
+  function groupUnseen(g) {
+    var opened = groupSeen[g.code] || [];
+    return g.members.some(function (m) { return !m.seen && opened.indexOf(m.username) === -1; });
+  }
+  function openGroup(g) {
+    // Opened before: who reposted since then (listed first in the viewer).
+    var prev = groupSeen[g.code];
+    post({ type: 'openGroup', value: JSON.stringify({ code: g.code, members: g.members.map(function (m) {
+      var c = {}; for (var k in m) c[k] = m[k];
+      c.fresh = Array.isArray(prev) && prev.indexOf(m.username) === -1;
+      return c;
+    }) }) });
+    groupSeen[g.code] = g.members.map(function (m) { return m.username; });
+    try { localStorage.setItem('following.groupSeen', JSON.stringify(groupSeen)); } catch (e) {}
+    drawGroups();
+    if (stripBox) reportStripHeight(stripBox);
+  }
+  window.__flGroups = function () { return groups; };
+  // Whose copy has nothing added, once the app's viewer has worked it out (for the bubble).
+  var groupPlain = {};
+  try { groupPlain = JSON.parse(localStorage.getItem('following.groupPlain') || '{}') || {}; } catch (e) {}
+  window.__flGroupPlain = function (code, username) {
+    if (groupPlain[code] === username) return;
+    groupPlain[code] = username;
+    try { localStorage.setItem('following.groupPlain', JSON.stringify(groupPlain)); } catch (e) {}
+    drawGroups();
+  };
+  function drawGroups() {
+    if (TAB !== 'stories' || location.pathname !== '/' || offlineState.offline) return;
+    var hidden = {}, slots = {};
+    // (Switched off in App settings: everyone's own bubble, as Instagram has it.)
+    (S('sharedPosts') ? groups : []).forEach(function (g) {
+      if (!g.slot) return;
+      slots[g.slot] = g;
+      g.members.forEach(function (m) { if (m.only && m.username !== g.slot) hidden[m.username] = true; });
+    });
+    var bs = [].slice.call(document.querySelectorAll('[role="button"][aria-label^="Story by "]'));
+    if (!bs.length) return;
+    bs.forEach(function (b) {
+      var m = /^Story by (.+?), (?:seen|not seen)$/.exec(b.getAttribute('aria-label') || '');
+      if (!m) return;
+      var n = m[1], hide = !!hidden[n];
+      if (hide !== !!b.__flHidden) {
+        b.__flHidden = hide;
+        if (hide) b.style.setProperty('display', 'none', 'important'); else b.style.removeProperty('display');
+      }
+      groupBubble(b, slots[n]);
+    });
+    // (Instagram measures each bubble as it draws it, so hidden ones take no room as you scroll.)
+  }
+  // The combined bubble, drawn over the first sharer's own bubble.
+  function groupBubble(b, g) {
+    var ov = b.querySelector(':scope > .fl-group');
+    if (!g) { if (ov) ov.remove(); return; }
+    var unseen = groupUnseen(g);
+    var key = g.code + '|' + unseen + '|' + g.members.length + '|' + (groupPlain[g.code] || '');
+    if (ov && ov.__key === key) return;
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'fl-group';
+      ov.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:3;display:flex;flex-direction:column;align-items:center;' +
+        'cursor:pointer;-webkit-tap-highlight-color:transparent;background:' + (getComputedStyle(document.body).backgroundColor || '#fff');
+      ['pointerdown', 'mousedown', 'touchstart', 'pointerup', 'mouseup', 'touchend'].forEach(function (t) {
+        ov.addEventListener(t, function (e) { e.stopPropagation(); }, true);
+      });
+      ov.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (ov.__g) openGroup(ov.__g);
+      });
+      if (getComputedStyle(b).position === 'static') b.style.position = 'relative';
+      b.appendChild(ov);
+    }
+    ov.__key = key;
+    ov.__g = g;
+    // Placed like Instagram's own ring and name, measured from the bubble underneath.
+    var canvas = b.querySelector('canvas'), label = b.querySelector('span[dir="auto"]');
+    var br = b.getBoundingClientRect(), cr = canvas ? canvas.getBoundingClientRect() : null, lr = label ? label.getBoundingClientRect() : null;
+    var ringTop = cr ? Math.round(cr.top - br.top) : 5, size = cr ? Math.round(cr.width) : 89;
+    var nameTop = lr ? Math.round(lr.top - br.top) : ringTop + size + 6;
+    var bg = ov.style.background;
+    // The middle of the plainest copy (the post itself), filling the circle.
+    var plainName = groupPlain[g.code];
+    var plain = g.members.filter(function (m) { return m.username === plainName; })[0] ||
+      g.members.filter(function (m) { return !m.extras.length && !m.vurl; })[0] || g.members[0];
+    var pics = '<div style="position:absolute;inset:0;border-radius:50%;background:#dbdbdb center/cover no-repeat' +
+      (plain && plain.url ? ' url(&quot;' + plain.url + '&quot;)' : '') + '"></div>';
+    var ring = unseen ? 'linear-gradient(to top right,#FFD600 0%,#FF7A00 28%,#FF0069 58%,#D300C5 100%)' : '#c7c7c7';
+    ov.innerHTML = '<div style="position:absolute;left:50%;top:' + ringTop + 'px;margin-left:' + (-size / 2) + 'px;width:' + size + 'px;height:' + size +
+      'px;border-radius:50%;box-sizing:border-box;padding:' + (unseen ? 3 : 2) + 'px;background:' + ring + '">' +
+      '<div style="width:100%;height:100%;border-radius:50%;background:' + bg + ';display:flex;align-items:center;justify-content:center">' +
+      '<div style="position:relative;width:75px;height:75px">' + pics + '</div></div></div>' +
+      '<div style="position:absolute;left:0;right:0;top:' + nameTop + 'px;text-align:center;white-space:nowrap;font:400 12px/16px -apple-system,system-ui,sans-serif;color:var(--fl-strong)">' +
+      '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align:-1px;margin-right:2px"><path d="' + REPOST_PATH + '"/></svg>' +
+      g.members.length + ' reposted</div>';
   }
   function marksRed() {
     var st = offlineState, w = st.watched || [];
@@ -542,7 +716,8 @@
       !(st.phase === 'loading' && offPlanned.indexOf(name) !== -1);
     var c = red ? '#ed4956' : 'currentColor', h = '';
     if (k.indexOf('p') !== -1) h += '<svg viewBox="0 0 24 24" width="12" height="12" fill="' + c + '" style="vertical-align:-1px;margin-right:2px"><path d="' + REPOST_PATH + '"/></svg>';
-    if (k.indexOf('v') !== -1) h += '<svg viewBox="0 0 24 24" width="10" height="10" fill="' + c + '" style="vertical-align:0;margin-right:2px"><path d="M6 3.5v17a1 1 0 0 0 1.5.86l14-8.5a1 1 0 0 0 0-1.72l-14-8.5A1 1 0 0 0 6 3.5Z"/></svg>';
+    // One mark at most: the repost mark wins when someone has both.
+    else if (k.indexOf('v') !== -1) h += '<svg viewBox="0 0 24 24" width="10" height="10" fill="' + c + '" style="vertical-align:0;margin-right:2px"><path d="M6 3.5v17a1 1 0 0 0 1.5.86l14-8.5a1 1 0 0 0 0-1.72l-14-8.5A1 1 0 0 0 6 3.5Z"/></svg>';
     return '<span style="margin-right:1px">' + h + '</span>';
   }
   function drawMarks() {
@@ -653,6 +828,12 @@
       return String((r.user || {}).pk) !== me && !(r.seen >= r.latest_reel_media);
     });
     var out = [], skipKind = {};
+    // Posts 3 or more people shared (the combined bubble) are never saved, for anyone.
+    var groupCodes = {};
+    if (S('sharedPosts')) {
+      try { await lookupKinds(); } catch (e) {}
+      groups.forEach(function (g) { groupCodes[g.code] = true; });
+    }
     for (var i = 0; i < tray.length; i += 20) {
       var ids = tray.slice(i, i + 20).map(function (r) { return String(r.id); });
       var d = await gqlRequest('PolarisStoriesV3ReelPageStandaloneQuery', '39989351314045574', {
@@ -669,14 +850,18 @@
         // for the row (a play mark for videos, a repost mark for shared posts).
         var unseen = (r.items || []).filter(function (it) { return !(r.seen >= it.taken_at); });
         var shared = function (it) { return (it.story_feed_media || []).length > 0; };
-        var eligible = unseen.some(function (it) { return it.media_type === 1 && !shared(it); });
+        var eligible = unseen.some(function (it) { return isPhoto(it) && !shared(it); });
         var name0 = (r.user && r.user.username) || ((t.user || {}).username) || '';
-        if (name0) skipKind[name0] = eligible ? '' : unseen.some(function (it) { return it.media_type !== 1 && !shared(it); }) ? 'video' :
+        if (name0) skipKind[name0] = eligible ? '' : unseen.some(function (it) { return !isPhoto(it) && !shared(it); }) ? 'video' :
           unseen.some(shared) ? 'post' : '';
         var items = (eligible ? unseen : [])
+          .filter(function (it) {
+            var sh = (it.story_feed_media || [])[0];
+            return !(sh && groupCodes[sh.media_code || sh.media_id || '']);
+          })
           .map(function (it) {
             var c = ((it.image_versions2 || {}).candidates || [])[0] || {};
-            var v = it.media_type === 2 ? ((it.video_versions || [])[0] || {}) : null;
+            var v = it.media_type === 2 && !isPhoto(it) ? ((it.video_versions || [])[0] || {}) : null;
             var mu = ((it.story_music_stickers || [])[0] || {}).music_asset_info;
             return { id: String(it.id), pk: String(it.pk), takenAt: it.taken_at || 0, expiresAt: it.expiring_at || 0,
               url: v ? (v.url || '') : (c.url || ''), video: !!v, duration: v ? (it.video_duration || 0) : 0,
@@ -744,6 +929,11 @@
     if (S('offlineStories')) offlineButton(); else versionLabel();
     lookupKinds();
     drawMarks();
+    drawGroups();
+    if (stripBox && !stripBox.__flGroupScroll) {
+      stripBox.__flGroupScroll = true;
+      stripBox.addEventListener('scroll', function () { drawGroups(); }, true);
+    }
     var text = S('storyCount') ? seenN + '/' + total + ' stories seen' : '';
     c.style.display = text ? '' : 'none';
     if (c.textContent !== text) {

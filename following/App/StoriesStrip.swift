@@ -15,6 +15,8 @@ import WebKit
 /// layer above the tabs (StoriesLayer).
 @MainActor
 final class StoriesModel: ObservableObject {
+    /// The one in use (the combined repost viewer opens profiles through it).
+    static weak var current: StoriesModel?
     /// A story (or a profile opened from one) is showing: the strip fills the screen.
     @Published private(set) var expanded = false
     /// The full-screen layer is showing a story (Instagram's viewer has its own close button).
@@ -64,12 +66,15 @@ final class StoriesModel: ObservableObject {
             self.opening = false
             self.place()
         }
+        Self.current = self
         strip.onMessage = { [weak self] type, value in
             guard let self else { return }
             if type == "stripReady" { self.rowReady(); self.pushBanner(); OfflineStories.shared.pushState(); Task { await OfflineStories.shared.checkSeenElsewhere() }; return }
             // Load all stories (the button above the row), and offline, a person's saved stories.
             if type == "offlineTap" { OfflineStories.shared.buttonTapped(); return }
             if type == "openOffline", let name = value as? String { OfflineStories.shared.viewerStart = name; return }
+            // A post 3 or more people shared: the combined viewer.
+            if type == "openGroup", let json = value as? String { SharedPosts.shared.open(json); return }
             #if DEBUG
             if type == "debugOffline", let on = value as? Bool { OfflineStories.shared.forceOffline = on; return }
             #endif

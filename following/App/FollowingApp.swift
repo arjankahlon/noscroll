@@ -99,6 +99,7 @@ struct RootTabs: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var settingsPane = SettingsPane.shared
     @ObservedObject private var offlineStories = OfflineStories.shared
+    @ObservedObject private var sharedPosts = SharedPosts.shared
     @ObservedObject private var profilePic = ProfilePic.shared
 
     /// Icons only, no labels. Profile shows your own picture once the app has it.
@@ -140,6 +141,8 @@ struct RootTabs: View {
                          onDismiss: { offlineStories.viewerClosed() }) {
             OfflineStoryViewer(reels: offlineStories.reel(startingAt: offlineStories.viewerStart))
         }
+        // A post 3 or more people shared to their stories: once, with who shared it.
+        .fullScreenCover(item: $sharedPosts.group) { g in SharedPostViewer(group: g) }
         // Grayscale and Appearance: everything, tab bar and banners included, at once.
         .followsLook()
     }

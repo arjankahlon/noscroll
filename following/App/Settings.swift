@@ -40,6 +40,7 @@ final class AppSettings: ObservableObject {
         ("Home feed", [
             Item(key: "storyCount", title: "\"Stories seen\" counter", detail: ""),
             Item(key: "offlineStories", title: "Allow offline stories", detail: "Tap to temporarily cache photo-only stories for offline viewing. Upon re-connecting, views, likes, and replies are synced to Instagram & cache is cleared"),
+            Item(key: "sharedPosts", title: "Condense stories reposted by 3+ people", detail: ""),
             Item(key: "bios", title: "Bios next to names", detail: "For private accounts, and public ones under the limit below."),
             Item(key: "oldDates", title: "Red dates on older posts", detail: "Bold red date on posts at least this many days old."),
             Item(key: "hideLikedEarlier", title: "Don't show posts you've already liked", detail: "Below the caught-up checkmark."),
