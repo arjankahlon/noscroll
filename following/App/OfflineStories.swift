@@ -316,7 +316,8 @@ final class OfflineStories: ObservableObject {
         }
         downloading = true
         defer { downloading = false }
-        let total = todo.count
+        // Progress counts people: someone is done once all their stories (videos too) are in.
+        let total = Set(todo.map(\.reelId)).count
         var done = 0
         phase = .loading(done: 0, total: total)
         pushState()
@@ -341,7 +342,7 @@ final class OfflineStories: ObservableObject {
             }
             todo.removeFirst()
             saveTodo()
-            done += 1
+            done = total - Set(todo.map(\.reelId)).count
             phase = .loading(done: done, total: total)
             pushState()
         }
@@ -650,7 +651,8 @@ final class OfflineStories: ObservableObject {
     /// The button above the story row (extras.js draws it from this).
     func pushState() {
         let waiting = Set(pending.map(\.mediaId)).union(unreported)
-        var state: [String: Any] = ["offline": offline, "saved": savedCount, "toDownload": todo.count, "pending": pending.count + likeChanges.count + replies.count,
+        // "N available offline": people, not stories (like "x/y stories seen", one per person).
+        var state: [String: Any] = ["offline": offline, "saved": reels.filter { !$0.items.isEmpty }.count, "toDownload": todo.count, "pending": pending.count + likeChanges.count + replies.count,
                                     "users": reels.filter { !$0.items.isEmpty }.map(\.username),
                                     // Everyone whose saved stories have all been watched: their ring goes gray.
                                     // Anyone with at least one story watched offline counts as seen in the count.
