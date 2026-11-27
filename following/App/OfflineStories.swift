@@ -33,7 +33,10 @@ final class OfflineStories: ObservableObject {
         var liked: Bool?        // already liked when it was loaded
         var video: Bool? = nil  // a video story (saved as .mp4, played with its sound)
         var duration: Double? = nil
+        var repost: Bool? = nil // shares someone else's post or reel
         var isVideo: Bool { video ?? false }
+        /// Downloaded last: videos and reposts (plain photos are watchable sooner).
+        var later: Bool { isVideo || (repost ?? false) }
     }
     struct Reel: Codable, Identifiable, Equatable {
         let id: String          // reel id (the owner's id)
@@ -281,8 +284,8 @@ final class OfflineStories: ObservableObject {
         guard let s = raw as? String, let data = s.data(using: .utf8),
               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { fail("Couldn't load stories"); return }
 
-        // What's new: skip anything already saved or already waiting. Photos go in the queue
-        // first, everyone's videos after them (they're bigger: the photos are watchable sooner).
+        // What's new: skip anything already saved or already waiting. Plain photos go in the
+        // queue first, everyone's reposts and videos after them (the photos are what you came for).
         let have = Set(reels.flatMap { $0.items.map(\.id) } + todo.map(\.item.id))
         var videos: [Todo] = []
         for r in list {
@@ -295,14 +298,16 @@ final class OfflineStories: ObservableObject {
                 let item = Item(id: mid, pk: pk, takenAt: i["takenAt"] as? Int ?? 0, expiresAt: i["expiresAt"] as? Int ?? 0,
                                 file: "\(pk).\(isVideo ? "mp4" : "jpg")", width: i["w"] as? Int ?? 1080, height: i["h"] as? Int ?? 1920,
                                 music: i["music"] as? String, liked: i["liked"] as? Bool,
-                                video: isVideo ? true : nil, duration: isVideo ? (i["duration"] as? Double) : nil)
+                                video: isVideo ? true : nil, duration: isVideo ? (i["duration"] as? Double) : nil,
+                                repost: (i["repost"] as? Bool ?? false) ? true : nil)
                 let t = Todo(reelId: id, userId: uid, username: name, pic: r["pic"] as? String, item: item, url: u)
-                if isVideo { videos.append(t) } else { todo.append(t) }
+                if item.later { videos.append(t) } else { todo.append(t) }
             }
         }
-        // Videos already waiting from an earlier tap stay behind the new photos too.
-        let waitingVideos = todo.filter { $0.item.isVideo }
-        todo = todo.filter { !$0.item.isVideo } + waitingVideos + videos
+        // Reposts and videos already waiting from an earlier tap stay behind the new photos too;
+        // reposts before videos (smaller).
+        let rest = todo.filter(\.item.later) + videos
+        todo = todo.filter { !$0.item.later } + rest.filter { !$0.item.isVideo } + rest.filter(\.item.isVideo)
         saveTodo()
         await runTodo()
     }

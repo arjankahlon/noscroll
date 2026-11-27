@@ -412,10 +412,20 @@
   function offlineRow() {
     var row = document.getElementById('fl-offrow');
     var st = offlineState;
-    var show = S('offlineStories') && TAB === 'stories' && location.pathname === '/' && st.offline && (st.users || []).length > 0;
+    // Whenever stories are saved (offline, or online with poor signal): saved people first.
+    // Cleared, Instagram's own row is back.
+    var show = S('offlineStories') && TAB === 'stories' && location.pathname === '/' && (st.users || []).length > 0;
     if (!show) { if (row) row.remove(); return; }
+    var online = !st.offline;
+    // Stacks: the people hidden in one aren't listed; the first one's place is the stack.
+    var hidden = {}, slotOf = {};
+    (S('sharedPosts') ? groups : []).forEach(function (g) {
+      if (!g.slot) return;
+      slotOf[g.slot] = g;
+      g.members.forEach(function (m) { if (m.only && m.username !== g.slot) hidden[m.username] = true; });
+    });
     var me = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || '';
-    var tray = (window.__flTray || []).filter(function (r) { return String((r.user || {}).pk) !== me; });
+    var tray = (window.__flTray || []).filter(function (r) { return String((r.user || {}).pk) !== me && !hidden[(r.user || {}).username]; });
     var saved = st.users || [], watched = st.watched || [];
     var people = [];
     // Saved and not yet watched, then saved and watched (as Instagram moves seen ones back),
@@ -434,12 +444,14 @@
     tray.forEach(function (r) {
       var u = r.user || {};
       if (saved.indexOf(u.username) !== -1) return;
-      if (r.seen && r.seen >= r.latest_reel_media) seenBefore[u.username] = true;
+      var g = slotOf[u.username];
+      if (g ? !groupUnseen(g) : ((r.seen && r.seen >= r.latest_reel_media) || storySeen[u.username])) seenBefore[u.username] = true;
       else (skipKinds[u.username] === 'post' ? onlyPosts : onlyVideos).push(u);
     });
     people = people.concat(onlyPosts, onlyVideos);
     tray.forEach(function (r) { var u = r.user || {}; if (seenBefore[u.username]) people.push(u); });
-    var key = JSON.stringify([saved, watched, people.length, Object.keys(st.pics || {}).length, storyKinds, marksRed()]);
+    var key = JSON.stringify([saved, watched, people.length, Object.keys(st.pics || {}).length, storyKinds, marksRed(), online,
+      Object.keys(storySeen).length, groups.map(function (g) { return g.code + groupUnseen(g); })]);
     if (row && row.__key === key) return;
     if (!row) {
       row = document.createElement('div');
@@ -455,15 +467,22 @@
       var it = document.createElement('div');
       it.className = 'fl-offitem';
       var before = !!seenBefore[u.username];
-      it.style.cssText = 'flex:none;width:102px;display:flex;flex-direction:column;align-items:center;padding-top:5px;' + (has ? '' : before ? 'opacity:.55;' : 'opacity:.35;');
+      var stack = slotOf[u.username];
+      // Colored ring: something left to watch (saved and not watched, or not saved and still
+      // unseen); gray: watched or seen. Not saved and offline: dimmed (can't be opened).
+      var fresh = has ? !done : !before;
+      it.style.cssText = 'flex:none;width:102px;display:flex;flex-direction:column;align-items:center;padding-top:5px;' +
+        (has || online ? '' : before ? 'opacity:.55;' : 'opacity:.35;');
       var ring = document.createElement('div');
-      ring.style.cssText = 'width:89px;height:89px;border-radius:50%;box-sizing:border-box;padding:' + (has && !done ? '3px' : '2px') + ';background:' +
-        (has && !done ? 'linear-gradient(to top right,#FFD600 0%,#FF7A00 28%,#FF0069 58%,#D300C5 100%)' : '#c7c7c7');
+      ring.style.cssText = 'width:89px;height:89px;border-radius:50%;box-sizing:border-box;padding:' + (fresh ? '3px' : '2px') + ';background:' +
+        (fresh ? 'linear-gradient(to top right,#FFD600 0%,#FF7A00 28%,#FF0069 58%,#D300C5 100%)' : '#c7c7c7');
       var inner = document.createElement('div');
       inner.style.cssText = 'width:100%;height:100%;border-radius:50%;padding:3px;box-sizing:border-box;background:' + row.style.background;
       var img = document.createElement('div');
       // The saved picture first (Instagram's can't load offline), then Instagram's.
-      var picUrl = (st.pics || {})[u.username] || u.profile_pic_url;
+      var plain = stack && (stack.members.filter(function (m) { return m.username === groupPlain[stack.code]; })[0] ||
+        stack.members.filter(function (m) { return !m.extras.length && !m.vurl; })[0] || stack.members[0]);
+      var picUrl = stack ? (plain && plain.url) : ((st.pics || {})[u.username] || u.profile_pic_url);
       img.style.cssText = 'width:100%;height:100%;border-radius:50%;background:#dbdbdb center/cover no-repeat' +
         (picUrl ? ';background-image:url("' + picUrl + '")' : '');
       inner.appendChild(img);
@@ -472,11 +491,20 @@
       var name = document.createElement('div');
       // Marks for what their stories have (shared posts, videos), on everyone; red for the
       // ones not saved (see markHTML).
-      name.innerHTML = markHTML(u.username, before);
-      name.appendChild(document.createTextNode(u.username || ''));
+      if (stack) {
+        name.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align:-1px;margin-right:2px"><path d="' + REPOST_PATH + '"/></svg>';
+        name.appendChild(document.createTextNode(stack.members.length + ' reposted'));
+      } else {
+        name.innerHTML = markHTML(u.username, before);
+        name.appendChild(document.createTextNode(u.username || ''));
+      }
       name.style.cssText = 'margin-top:6px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/16px -apple-system,system-ui,sans-serif;color:var(--fl-strong)';
       it.appendChild(name);
+      // Saved: the app's viewer (works with no or poor signal). Online, the others open as
+      // usual: a stack in the stack viewer, anyone else in Instagram's.
       if (has) it.__flTap = function () { post({ type: 'openOffline', value: u.username }); };
+      else if (online && stack) it.__flTap = function () { openGroup(stack); };
+      else if (online) it.__flTap = function () { openStoryOf(u.username); };
       row.appendChild(it);
     });
   }
@@ -673,6 +701,16 @@
     if (i < 0 || i >= names.length) return 'none';
     var n = names[i];
     if (slotOf[n]) { openGroup(slotOf[n]); return 'stack'; }
+    openStoryOf(n);
+    return 'story';
+  };
+  // Someone's stories in Instagram's viewer, as if their bubble in Instagram's row was tapped.
+  function openStoryOf(n) {
+    var hidden = {};
+    (S('sharedPosts') ? groups : []).forEach(function (g) {
+      if (g.slot) g.members.forEach(function (m) { if (m.only && m.username !== g.slot) hidden[m.username] = true; });
+    });
+    var i = trayNames().filter(function (x) { return x && !hidden[x]; }).indexOf(n);
     var tries = 0;
     (function go() {
       var b = [].filter.call(document.querySelectorAll('[role="button"][aria-label^="Story by "]'), function (b) {
@@ -689,8 +727,7 @@
       if (++tries < 20) setTimeout(go, 100);
       else location.href = '/stories/' + encodeURIComponent(n) + '/';
     })();
-    return 'story';
-  };
+  }
   // Whose copy has nothing added, once the app's viewer has worked it out (for the bubble).
   var groupPlain = {};
   try { groupPlain = JSON.parse(localStorage.getItem('following.groupPlain') || '{}') || {}; } catch (e) {}
@@ -940,7 +977,7 @@
             var v = it.media_type === 2 && !isPhoto(it) ? ((it.video_versions || [])[0] || {}) : null;
             var mu = ((it.story_music_stickers || [])[0] || {}).music_asset_info;
             return { id: String(it.id), pk: String(it.pk), takenAt: it.taken_at || 0, expiresAt: it.expiring_at || 0,
-              url: v ? (v.url || '') : (c.url || ''), video: !!v, duration: v ? (it.video_duration || 0) : 0,
+              url: v ? (v.url || '') : (c.url || ''), video: !!v, repost: (it.story_feed_media || []).length > 0, duration: v ? (it.video_duration || 0) : 0,
               w: c.width || 1080, h: c.height || 1920, liked: !!it.has_liked,
               music: !v && mu && mu.title ? mu.title + (mu.display_artist ? ' · ' + mu.display_artist : '') : null };
           }).filter(function (it) { return it.url; });
