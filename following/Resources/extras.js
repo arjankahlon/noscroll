@@ -439,7 +439,7 @@
     });
     people = people.concat(onlyPosts, onlyVideos);
     tray.forEach(function (r) { var u = r.user || {}; if (seenBefore[u.username]) people.push(u); });
-    var key = JSON.stringify([saved, watched, people.length, Object.keys(st.pics || {}).length]);
+    var key = JSON.stringify([saved, watched, people.length, Object.keys(st.pics || {}).length, storyKinds, marksRed()]);
     if (row && row.__key === key) return;
     if (!row) {
       row = document.createElement('div');
@@ -470,16 +470,93 @@
       ring.appendChild(inner);
       it.appendChild(ring);
       var name = document.createElement('div');
-      // Nothing saved (and not seen before): a play mark for videos, the repost mark when
-      // their stories share posts.
-      if (!has && !before && skipKinds[u.username] === 'post') {
-        name.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="' + REPOST_PATH + '"/></svg>';
-        name.appendChild(document.createTextNode(u.username || ''));
-      } else name.textContent = (has || before ? '' : '▶︎ ') + (u.username || '');
+      // Marks for what their stories have (shared posts, videos), on everyone; red for the
+      // ones not saved (see markHTML).
+      name.innerHTML = markHTML(u.username, before);
+      name.appendChild(document.createTextNode(u.username || ''));
       name.style.cssText = 'margin-top:6px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/16px -apple-system,system-ui,sans-serif;color:var(--fl-strong)';
       it.appendChild(name);
       if (has) it.__flTap = function () { post({ type: 'openOffline', value: u.username }); };
       row.appendChild(it);
+    });
+  }
+  // Marks under names in the story row: a repost mark if someone's stories include a shared
+  // post or reel, a play mark if they include a video of their own. Shown on everyone, seen or
+  // not, saved or not. From the moment a download starts until every saved story is watched
+  // (or the saved ones are deleted, expire, or are cleared on force close), the marks of people
+  // with unwatched stories that weren't saved turn red: those are what you'd miss offline.
+  // What everyone's stories have, by username: 'p' shared posts, 'v' videos ('pv' both).
+  var storyKinds = {};
+  try { storyKinds = JSON.parse(localStorage.getItem('following.kinds') || '{}') || {}; } catch (e) {}
+  // Who the current download is for (so they don't flash red while it's still saving them).
+  var offPlanned = [];
+  try { offPlanned = JSON.parse(localStorage.getItem('following.offPlan') || '[]') || []; } catch (e) {}
+  function kindOf(r) {
+    var items = r.items || [], k = '';
+    var shared = function (it) { return (it.story_feed_media || []).length > 0; };
+    if (items.some(shared)) k += 'p';
+    if (items.some(function (it) { return it.media_type === 2 && !shared(it); })) k += 'v';
+    return k;
+  }
+  function saveKinds() { try { localStorage.setItem('following.kinds', JSON.stringify(storyKinds)); } catch (e) {} }
+  // Looked up once per new story row from Instagram (the request its own story viewer makes,
+  // 20 people at a time; it doesn't mark anything as seen), after the row is already showing.
+  var kindsFor = -1, kindsBusy = false, kindsRetry = 0;
+  async function lookupKinds() {
+    var v = window.__flTrayVersion || 0;
+    if (kindsBusy || v === kindsFor || offlineState.offline || Date.now() < kindsRetry) return;
+    var me = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || '';
+    var tray = (window.__flTray || []).filter(function (r) { return String((r.user || {}).pk) !== me; });
+    if (!tray.length) return;
+    kindsBusy = true;
+    try {
+      var out = {};
+      for (var i = 0; i < tray.length; i += 20) {
+        var d = await gqlRequest('PolarisStoriesV3ReelPageStandaloneQuery', '39989351314045574', {
+          reel_ids_arr: tray.slice(i, i + 20).map(function (r) { return String(r.id); }), is_highlight: false, media_id: null,
+          __relay_internal__pv__PolarisCommunityNoteStoriesLabelEnabledrelayprovider: false });
+        ((d.xdt_api__v1__feed__reels_media || {}).reels_media || []).forEach(function (r) {
+          var t = tray.filter(function (x) { return String(x.id) === String(r.id); })[0] || {};
+          var name = (r.user && r.user.username) || ((t.user || {}).username) || '';
+          if (name) out[name] = kindOf(r);
+        });
+      }
+      storyKinds = out;
+      saveKinds();
+      kindsFor = v;
+    } catch (e) { kindsRetry = Date.now() + 60000; }
+    kindsBusy = false;
+    drawMarks();
+    offlineRow();
+  }
+  function marksRed() {
+    var st = offlineState, w = st.watched || [];
+    return st.phase === 'loading' || (st.users || []).some(function (n) { return w.indexOf(n) === -1; });
+  }
+  // The marks for someone, before their name ('' for none). seen: nothing left to watch.
+  function markHTML(name, seen) {
+    var k = storyKinds[name] || '';
+    if (!k) return '';
+    var st = offlineState;
+    var red = !seen && marksRed() && (st.users || []).indexOf(name) === -1 &&
+      !(st.phase === 'loading' && offPlanned.indexOf(name) !== -1);
+    var c = red ? '#ed4956' : 'currentColor', h = '';
+    if (k.indexOf('p') !== -1) h += '<svg viewBox="0 0 24 24" width="12" height="12" fill="' + c + '" style="vertical-align:-1px;margin-right:2px"><path d="' + REPOST_PATH + '"/></svg>';
+    if (k.indexOf('v') !== -1) h += '<svg viewBox="0 0 24 24" width="10" height="10" fill="' + c + '" style="vertical-align:0;margin-right:2px"><path d="M6 3.5v17a1 1 0 0 0 1.5.86l14-8.5a1 1 0 0 0 0-1.72l-14-8.5A1 1 0 0 0 6 3.5Z"/></svg>';
+    return '<span style="margin-right:1px">' + h + '</span>';
+  }
+  function drawMarks() {
+    if (TAB !== 'stories' || location.pathname !== '/') return;
+    [].forEach.call(document.querySelectorAll('[role="button"][aria-label^="Story by "]'), function (b) {
+      var m = /^Story by (.+?), (seen|not seen)$/.exec(b.getAttribute('aria-label') || '');
+      var label = b.querySelector('span[dir="auto"] > span');
+      if (!m || !label) return;
+      var html = markHTML(m[1], m[2] === 'seen'), cur = label.querySelector('.fl-mark');
+      if (!html) { if (cur) cur.remove(); return; }
+      if (cur && cur.__html === html) return;
+      if (!cur) { cur = document.createElement('span'); cur.className = 'fl-mark'; label.insertBefore(cur, label.firstChild); }
+      cur.innerHTML = html;
+      cur.__html = html;
     });
   }
   // Apple's symbol for the state (sent by the app), tinted like the text; the drawn ones if not.
@@ -519,6 +596,7 @@
     offlineState = st || offlineState;
     drawOffline();
     grayRings();
+    drawMarks();
     // Stories watched offline count as seen in "x/y stories seen" right away.
     if (stripBox) reportStripHeight(stripBox);
     offlineRow();
@@ -605,11 +683,15 @@
               w: c.width || 1080, h: c.height || 1920, liked: !!it.has_liked,
               music: !v && mu && mu.title ? mu.title + (mu.display_artist ? ' · ' + mu.display_artist : '') : null };
           }).filter(function (it) { return it.url; });
+        if (name0) storyKinds[name0] = kindOf(r);
         if (items.length) out.push({ reelId: String(r.id), userId: String(u.pk || u.id || r.id), username: u.username || '',
           pic: u.profile_pic_url || '', items: items });
       });
     }
     try { localStorage.setItem('following.offSkip', JSON.stringify(skipKind)); } catch (e) {}
+    offPlanned = out.map(function (o) { return o.username; });
+    try { localStorage.setItem('following.offPlan', JSON.stringify(offPlanned)); } catch (e) {}
+    saveKinds();
     return JSON.stringify(out);
   };
 
@@ -660,6 +742,8 @@
     // And on the right of the same line: Load offline stories (for a stretch without signal), or
     // with offline stories switched off in App settings, which version of the app this is.
     if (S('offlineStories')) offlineButton(); else versionLabel();
+    lookupKinds();
+    drawMarks();
     var text = S('storyCount') ? seenN + '/' + total + ' stories seen' : '';
     c.style.display = text ? '' : 'none';
     if (c.textContent !== text) {
