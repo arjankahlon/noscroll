@@ -588,6 +588,7 @@
         (byCode[it.code] = byCode[it.code] || []).push({ name: n, item: it });
       });
     });
+    setTimeout(noSeenList, 0);
     groups = Object.keys(byCode).filter(function (c) { return byCode[c].length >= 3; }).map(function (c) {
       var ms = byCode[c].map(function (m) {
         var s = shareInfo[m.name], it = m.item;
@@ -625,6 +626,37 @@
     if (stripBox) reportStripHeight(stripBox);
   }
   window.__flGroups = function () { return groups; };
+  // The stack someone is hidden in (their only story is its post), if any.
+  function stackOf(name) {
+    if (!S('sharedPosts')) return null;
+    return groups.filter(function (g) {
+      return g.slot && g.members.some(function (m) { return m.only && m.username === name; });
+    })[0] || null;
+  }
+  // Leave Instagram's viewer (its close button) and open the stack viewer.
+  var entering = false;
+  function enterStack(g) {
+    if (entering) return;
+    entering = true;
+    setTimeout(function () {
+      var close = document.querySelector('svg[aria-label="Close"]');
+      var btn = close && (close.closest('[role="button"],button') || close.parentElement);
+      if (btn) btn.click(); else history.back();
+      openGroup(g);
+      // Still on a story page (nothing closed it): back to the row the sure way.
+      setTimeout(function () { if (/^\/stories\//.test(location.pathname)) history.back(); }, 400);
+      setTimeout(function () { entering = false; if (/^\/stories\//.test(location.pathname)) location.replace('/'); }, 1200);
+    }, 0);
+  }
+  // Instagram's own "seen" for a repost in a stack: not sent (window.__flNoSeen, read by
+  // privacy-hook.js), unless watched from that person's profile.
+  function noSeenList() {
+    var ids = {};
+    if (S('sharedPosts')) groups.forEach(function (g) {
+      if (g.slot) g.members.forEach(function (m) { if (m.only) ids[m.pk] = true; });
+    });
+    window.__flNoSeen = ids;
+  }
   // From the stack viewer, swiping sideways: the person (or stack) before or after the stack in
   // the row, opened as if tapped there (Instagram's own viewer, which marks what you watch).
   window.__flOpenNeighbor = function (code, dir) {
@@ -816,8 +848,18 @@
     ['pushState', 'replaceState'].forEach(function (k) {
       var orig = history[k];
       history[k] = function () {
+        var before = location.pathname;
         var r = orig.apply(this, arguments);
         var sv = /^\/stories\/([^/]+)\//.exec(location.pathname);
+        // Watching from someone's profile: their stories count as usual (a repost in a stack
+        // included). From the row, Instagram's viewer would walk into the people hidden in a
+        // stack one by one: the stack viewer opens instead.
+        if (!sv) window.__flFromProfile = /^\/[^/]+\/$/.test(location.pathname) && location.pathname !== '/';
+        else if (!/^\/stories\//.test(before)) window.__flFromProfile = /^\/[^/]+\/$/.test(before) && before !== '/';
+        if (sv && sv[1] !== 'highlights' && !window.__flFromProfile && stackOf(decodeURIComponent(sv[1]))) {
+          enterStack(stackOf(decodeURIComponent(sv[1])));
+          return r;
+        }
         if (sv && sv[1] !== 'highlights') storySeen[decodeURIComponent(sv[1])] = true;
         return r;
       };

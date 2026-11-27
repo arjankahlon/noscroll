@@ -166,11 +166,27 @@
     return ctx;
   }
 
+  // Instagram's "seen" for a repost hidden in a stack (extras.js keeps window.__flNoSeen): not
+  // sent, unless that person's stories were opened from their profile.
+  function blockedSeen(body) {
+    try {
+      if (window.__flFromProfile || !window.__flNoSeen || typeof body !== 'string') return false;
+      var p = new URLSearchParams(body);
+      if (!/SeenMutation$/.test(p.get('fb_api_req_friendly_name') || '')) return false;
+      var v = JSON.parse(p.get('variables') || '{}');
+      var id = String(v.reelMediaId || (v.input && v.input.reel_media_id) || '');
+      return !!(id && window.__flNoSeen[id]);
+    } catch (e) { return false; }
+  }
+
   var origFetch = window.fetch;
   window.__flFetch = origFetch;
   if (origFetch) {
     window.fetch = function (input, init) {
       var url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (blockedSeen(init && init.body)) {
+        return Promise.resolve(new Response('{"data":{}}', { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
       var ctx = { after: '' };
       try { ctx = inspect(url, init && init.body, init && init.headers); } catch (e) {}
       var p = origFetch.apply(this, arguments);
@@ -200,6 +216,19 @@
   var origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (body) {
     var xhr = this;
+    if (blockedSeen(body)) {
+      // Answered here, as if Instagram had said OK.
+      try {
+        Object.defineProperty(xhr, 'readyState', { value: 4 });
+        Object.defineProperty(xhr, 'status', { value: 200 });
+        Object.defineProperty(xhr, 'responseText', { value: '{"data":{}}' });
+        Object.defineProperty(xhr, 'response', { value: '{"data":{}}' });
+      } catch (e) {}
+      setTimeout(function () {
+        ['readystatechange', 'load', 'loadend'].forEach(function (t) { xhr.dispatchEvent(new Event(t)); });
+      }, 0);
+      return;
+    }
     var ctx = { after: '' };
     try { ctx = inspect(xhr.__flUrl, body, xhr.__flHeaders); } catch (e) {}
     this.addEventListener('load', function () {
