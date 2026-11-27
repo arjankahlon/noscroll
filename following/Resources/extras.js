@@ -2791,7 +2791,18 @@
       return;
     }
     var cur = bigVideo();
-    if (cur) useAppleControls(cur);
+    // Not in a chat (a reel someone sent you): that's Instagram's own viewer, left as it is.
+    if (cur && !/^\/direct\//.test(location.pathname)) useAppleControls(cur);
+    // In a chat, the viewer is a list you can swipe through to the next reels: the reel you
+    // tapped stays put (Instagram can still move the list itself, to open the one you tapped).
+    if (cur && /^\/direct\//.test(location.pathname)) {
+      for (var sn = cur.parentElement; sn && sn !== document.body; sn = sn.parentElement) {
+        if (/y/.test(getComputedStyle(sn).scrollSnapType || '')) {
+          if (sn.style.overflowY !== 'hidden') sn.style.setProperty('overflow-y', 'hidden', 'important');
+          break;
+        }
+      }
+    }
     // Already playing at exactly 1× (it started before the page script saw it): 1.01×, so the
     // first tap of 2× is seamless too.
     if (cur && cur.playbackRate === 1 && playRate === NORMAL_RATE) cur.playbackRate = NORMAL_RATE;
@@ -2812,6 +2823,20 @@
     }
     if (cur) showRate(btn, cur.playbackRate);
     btn.style.display = cur && S('speedButton') ? 'block' : 'none';   // ("1×/2× speed button" in Settings)
+    // Right under Instagram's mute button when it's in the top corner (a reel in a chat);
+    // otherwise where it always is.
+    var top = 140;
+    if (cur) {
+      [].some.call(document.querySelectorAll('svg[aria-label^="Audio is"]'), function (s) {
+        var r = s.getBoundingClientRect();
+        if (r.width === 0 || r.top < 0 || r.top > 160 || r.left < window.innerWidth - 90) return false;
+        var box = (s.closest('[role="button"],button') || s).getBoundingClientRect();
+        var bottom = box.height > 0 && box.height < 80 ? box.bottom : r.bottom + 8;   // its round button
+        top = Math.round(bottom + 8);
+        return true;
+      });
+    }
+    if (btn.style.top !== top + 'px') btn.style.top = top + 'px';
   }
 
   // Someone's profile, their "..." menu: Instagram's "Embed" row becomes "Mute account" /
