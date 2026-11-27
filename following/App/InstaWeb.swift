@@ -102,6 +102,8 @@ final class InstaWebController: NSObject, ObservableObject {
         webView.reload()
     }
 
+    private var storyObserver: NSKeyValueObservation?
+
     init(tab: InstaTab) {
         self.tab = tab
 
@@ -120,6 +122,12 @@ final class InstaWebController: NSObject, ObservableObject {
         webView = WKWebView(frame: .zero, configuration: cfg)
         webView.allowsBackForwardNavigationGestures = true
         super.init()
+        // On a story, the edge swipes are Instagram's (to the next or previous person), not iOS's
+        // back and forward between pages.
+        storyObserver = webView.observe(\.url, options: [.new]) { wv, _ in
+            let story = wv.url?.path.hasPrefix("/stories/") ?? false
+            DispatchQueue.main.async { if wv.allowsBackForwardNavigationGestures == story { wv.allowsBackForwardNavigationGestures = !story } }
+        }
 
         content.add(MessageProxy(self), name: "following")
         webView.navigationDelegate = self

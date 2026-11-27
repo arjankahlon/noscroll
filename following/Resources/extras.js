@@ -625,6 +625,40 @@
     if (stripBox) reportStripHeight(stripBox);
   }
   window.__flGroups = function () { return groups; };
+  // From the stack viewer, swiping sideways: the person (or stack) before or after the stack in
+  // the row, opened as if tapped there (Instagram's own viewer, which marks what you watch).
+  window.__flOpenNeighbor = function (code, dir) {
+    var hidden = {}, slotOf = {};
+    (S('sharedPosts') ? groups : []).forEach(function (g) {
+      if (!g.slot) return;
+      slotOf[g.slot] = g;
+      g.members.forEach(function (m) { if (m.only && m.username !== g.slot) hidden[m.username] = true; });
+    });
+    var names = trayNames().filter(function (n) { return n && !hidden[n]; });
+    var g = groups.filter(function (x) { return x.code === code; })[0];
+    if (!g || !g.slot) return 'none';
+    var i = names.indexOf(g.slot) + dir;
+    if (i < 0 || i >= names.length) return 'none';
+    var n = names[i];
+    if (slotOf[n]) { openGroup(slotOf[n]); return 'stack'; }
+    var tries = 0;
+    (function go() {
+      var b = [].filter.call(document.querySelectorAll('[role="button"][aria-label^="Story by "]'), function (b) {
+        return (/^Story by (.+?), (?:seen|not seen)$/.exec(b.getAttribute('aria-label') || '') || [])[1] === n;
+      })[0];
+      if (b) { b.click(); return; }
+      // Instagram only keeps the bubbles near the screen: bring theirs in, then tap it.
+      if (tries === 0) {
+        var first = document.querySelector('[role="button"][aria-label^="Story by "]');
+        var sc = first && first.parentElement;
+        while (sc && sc.scrollWidth <= sc.clientWidth + 1) sc = sc.parentElement;
+        if (sc && first) sc.scrollLeft = Math.max(0, i * first.getBoundingClientRect().width - 100);
+      }
+      if (++tries < 20) setTimeout(go, 100);
+      else location.href = '/stories/' + encodeURIComponent(n) + '/';
+    })();
+    return 'story';
+  };
   // Whose copy has nothing added, once the app's viewer has worked it out (for the bubble).
   var groupPlain = {};
   try { groupPlain = JSON.parse(localStorage.getItem('following.groupPlain') || '{}') || {}; } catch (e) {}

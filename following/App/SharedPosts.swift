@@ -45,6 +45,19 @@ final class SharedPosts: ObservableObject {
         group = g
     }
 
+    /// Swiped sideways out of the stack: the person (or stack) before or after it in the row.
+    func neighbor(_ code: String, _ dir: Int) {
+        group = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            OfflineStories.shared.strip?.webView.evaluateJavaScript("window.__flOpenNeighbor && window.__flOpenNeighbor(\(Self.js(code)), \(dir))")
+        }
+    }
+
+    private static func js(_ s: String) -> String {
+        let d = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data()
+        return String((String(data: d, encoding: .utf8) ?? "[\"\"]").dropFirst().dropLast())
+    }
+
     /// Someone's profile, from the list of who reposted it: the viewer closes first.
     func openProfile(_ username: String) {
         group = nil
@@ -340,12 +353,29 @@ struct SharedPostViewer: View {
             Color.black
                 .overlay { story.clipShape(RoundedRectangle(cornerRadius: 10)) }
                 .ignoresSafeArea()
-            // Tap the left or right side for the previous or next person's copy.
-            HStack(spacing: 0) {
-                Color.clear.contentShape(Rectangle()).onTapGesture { step(-1) }
-                Color.clear.contentShape(Rectangle()).onTapGesture { step(1) }
+            // Like Instagram's story viewer: tap the left third or the rest for the previous or next
+            // copy in the stack; swipe sideways for the person (or stack) before or after it in
+            // the row; swipe down to close; swipe up for who reposted it.
+            GeometryReader { geo in
+                Color.clear.contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0).onEnded { v in
+                        let dx = v.translation.width, dy = v.translation.height
+                        if abs(dy) > abs(dx), dy > 80 { dismiss(); return }
+                        if abs(dy) > abs(dx), dy < -60 { list = true; return }
+                        if abs(dx) > abs(dy), abs(dx) > 50 { SharedPosts.shared.neighbor(group.code, dx < 0 ? 1 : -1); return }
+                        if abs(dx) < 12, abs(dy) < 12 { step(v.location.x < geo.size.width / 3 ? -1 : 1) }
+                    })
             }
+            .ignoresSafeArea()
             VStack(spacing: 6) {
+                // One line per person in the stack, like one per story in Instagram's viewer.
+                let order = group.ordered, at = order.firstIndex(of: shown) ?? 0
+                HStack(spacing: 3) {
+                    ForEach(Array(order.enumerated()), id: \.offset) { i, _ in
+                        Capsule().fill(.white.opacity(i <= at ? 0.95 : 0.35)).frame(height: 2.5)
+                    }
+                }
+                .padding(.bottom, 4)
                 HStack {
                     Button { list = true } label: {
                         HStack(spacing: 8) {
@@ -407,7 +437,8 @@ struct SharedPostViewer: View {
         let list = group.ordered
         let i = list.firstIndex(of: shown) ?? 0
         let j = i + d
-        if j < 0 || j >= list.count { if d > 0 { dismiss() }; return }
+        // Past either end of the stack: on to the person before or after it in the row.
+        if j < 0 || j >= list.count { SharedPosts.shared.neighbor(group.code, d); return }
         showing = list[j].username
     }
 
